@@ -27,6 +27,9 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Install Linux graphics library
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y libgl1-mesa-dev
+
       - name: Install HarmonyOS 26 command line tools
         shell: bash
         run: |
@@ -55,10 +58,16 @@ jobs:
           echo "OHOS_NDK_HOME=$install_root/command-line-tools/sdk/default/openharmony" >> "$GITHUB_ENV"
           df -h "$RUNNER_TEMP"
 
+      - name: Verify HarmonyOS build tools
+        run: |
+          java --version
+          node --version
+          hvigorw -v
+
       - name: Build unsigned HAP
         run: |
           test ! -e signing.local.json
-          hvigorw --mode module -p product=default assembleHap --no-daemon --accept-license
+          hvigorw assembleHap --mode module -p product=default --no-daemon
           test -f entry/build/default/outputs/default/harmonyledger.hap
 
       - name: Upload HAP artifact
