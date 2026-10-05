@@ -7,6 +7,7 @@ export struct SettingsView {
   onBack: () => void = () => {};
   onCycleStartDayChange: (day: number) => void = (_day: number) => {};
   onOpenNotificationSettings: () => void = () => {};
+  onExportCsv: () => void = () => {};
 
   build() {
     Column() {
@@ -36,6 +37,26 @@ export struct SettingsView {
             Text('账目和 OCR 截图只在本机处理，不会上传。卸载应用可能会删除本机数据。')
               .fontSize(13)
               .fontColor('#52606D');
+          }
+          .width('100%')
+          .alignItems(HorizontalAlign.Start)
+          .padding(16)
+          .backgroundColor('#FFFFFF')
+          .borderRadius(14);
+
+          Column({ space: 8 }) {
+            Text('数据备份')
+              .fontSize(17)
+              .fontWeight(FontWeight.Bold)
+              .fontColor('#172B4D');
+            Text('导出全部账目并在系统文件选择器中选择保存位置。')
+              .fontSize(13)
+              .fontColor('#52606D');
+            Button('导出全部账目为 CSV')
+              .width('100%')
+              .backgroundColor('#2857C5')
+              .fontColor('#FFFFFF')
+              .onClick(() => this.onExportCsv());
           }
           .width('100%')
           .alignItems(HorizontalAlign.Start)

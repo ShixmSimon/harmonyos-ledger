@@ -24,6 +24,7 @@ import { LedgerEditorView } from './ledger/LedgerEditorView';
 import { StatisticsRange, statisticsRange } from '../services/LedgerStatistics';
 import { StatisticsView } from './statistics/StatisticsView';
 import { OcrImporter } from '../services/OcrImporter';
+import { CsvExporter } from '../services/CsvExporter';
 import { OcrDraftConfirmationPlan, OcrImportCoordinator } from '../services/OcrImportCoordinator';
 import { OcrImportView } from './import/OcrImportView';
 import { DraftValidationError, OcrImportResult, UnclassifiedOcrPage } from '../model/OcrModels';
@@ -251,6 +252,9 @@ struct Index {
           },
           onOpenNotificationSettings: () => {
             this.screen = 'notificationSettings';
+          },
+          onExportCsv: () => {
+            void this.exportCsv();
           }
         });
       } else if (this.screen === 'notificationSettings') {
@@ -1243,6 +1247,19 @@ struct Index {
       this.statisticsEditorOpen = false;
     } else {
       this.screen = 'ledger';
+    }
+  }
+
+  private async exportCsv(): Promise<void> {
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const entries = await this.repository.listEntries();
+      this.entries = entries;
+      const exported = await CsvExporter.export(context, entries);
+      this.showToast(exported ? 'CSV 已导出' : '已取消导出');
+    } catch (error) {
+      const businessError = error as BusinessError;
+      this.showToast('导出失败：' + businessError.message);
     }
   }
 
