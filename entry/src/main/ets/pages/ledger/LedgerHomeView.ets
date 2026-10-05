@@ -43,7 +43,7 @@ export struct LedgerHomeView {
         Column({ space: 16 }) {
           Row() {
             Column({ space: 4 }) {
-              Text('鸿蒙记账')
+              Text('通知记账')
                 .fontSize(27)
                 .fontWeight(FontWeight.Bold)
                 .fontColor('#172B4D');

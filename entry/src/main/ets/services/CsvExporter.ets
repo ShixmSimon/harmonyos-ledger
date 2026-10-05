@@ -18,7 +18,7 @@ export class CsvExporter {
       ].join(','));
     });
     const options = new picker.DocumentSaveOptions();
-    options.newFileNames = ['鸿蒙记账.csv'];
+    options.newFileNames = ['通知记账.csv'];
     options.fileSuffixChoices = ['csv'];
     const documentPicker = new picker.DocumentViewPicker(context);
     const uris = await documentPicker.save(options);
