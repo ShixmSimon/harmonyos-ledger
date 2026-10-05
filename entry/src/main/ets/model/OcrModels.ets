@@ -32,3 +32,8 @@ export interface OcrImportResult {
   rawText: string;
   unclassifiedPages: UnclassifiedOcrPage[];
 }
+
+export interface DraftValidationError {
+  id: string;
+  message: string;
+}

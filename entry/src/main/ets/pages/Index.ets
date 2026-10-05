@@ -3,8 +3,10 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { preferences } from '@kit.ArkData';
 import { LedgerRepository } from '../data/LedgerRepository';
 import {
+  DraftEntry,
   EntryDirection,
   EntrySource,
+  ImportSource,
   LedgerEntry,
   formatDateOnly,
   formatDateTime,
@@ -19,16 +21,29 @@ import { LedgerEditorView } from './ledger/LedgerEditorView';
 import { StatisticsRange, statisticsRange } from '../services/LedgerStatistics';
 import { StatisticsView } from './statistics/StatisticsView';
 import { OcrImporter } from '../services/OcrImporter';
+import { OcrDraftConfirmationPlan, OcrImportCoordinator } from '../services/OcrImportCoordinator';
 import { OcrImportView } from './import/OcrImportView';
+import { DraftValidationError, OcrImportResult, UnclassifiedOcrPage } from '../model/OcrModels';
+import { indexStorage } from '../state/IndexStorage';
 
-
-@Entry
+@Entry(indexStorage)
 @Component
 struct Index {
+  @LocalStorageLink('shareImportMode') private shareImportMode: boolean = false;
+  @LocalStorageLink('sharedImageUris') private sharedImageUris: string[] = [];
+  @LocalStorageLink('shareImportError') private sharedImportError: string = '';
   @State private screen: 'ledger' | 'editor' | 'statistics' | 'import' = 'ledger';
+  @State private drafts: DraftEntry[] = [];
+  @State private unclassifiedPages: UnclassifiedOcrPage[] = [];
   @State private ocrRawText: string = '';
   @State private ocrLoading: boolean = false;
   @State private ocrErrorMessage: string = '';
+  @State private reviewMessage: string = '';
+  @State private draftValidationErrors: DraftValidationError[] = [];
+  @State private shareImportCompleted: boolean = false;
+  @State private shareImportCancelled: boolean = false;
+  @State private shareImportOutcomeMessage: string = '';
+  private sharedImportUris: string[] = [];
   private ocrRequestId: number = 0;
   @State private entries: LedgerEntry[] = [];
   @State private ready: boolean = false;
@@ -69,7 +84,11 @@ struct Index {
       return true;
     }
     if (this.screen === 'import') {
-      this.leaveOcrImport();
+      this.requestLeaveImport();
+      return true;
+    }
+    if (this.shareImportMode) {
+      void this.closeShareImport();
       return true;
     }
     if (this.statisticsEditorOpen || this.screen === 'editor') {
@@ -91,18 +110,39 @@ struct Index {
     Stack() {
       if (!this.ready) {
         this.loadingView();
+      } else if (this.shareImportMode && this.shareImportCompleted) {
+        this.shareImportOutcomeView(true);
+      } else if (this.shareImportMode && this.shareImportCancelled) {
+        this.shareImportOutcomeView(false);
+      } else if (this.shareImportMode && this.sharedImportError.length > 0) {
+        this.shareImportErrorView();
       } else if (this.screen === 'import') {
         OcrImportView({
+          drafts: this.drafts,
+          unclassifiedPages: this.unclassifiedPages,
           rawText: this.ocrRawText,
           loading: this.ocrLoading,
           errorMessage: this.ocrErrorMessage,
-          onBack: () => this.leaveOcrImport(),
+          reviewMessage: this.reviewMessage,
+          validationErrors: this.draftValidationErrors,
+          selectedDraftCount: OcrImportCoordinator.selectedCount(this.drafts),
+          shareImportMode: this.shareImportMode,
+          sourceLabel: (source: EntrySource) => this.sourceLabel(source),
+          duplicateMessage: (draft: DraftEntry) => OcrImportCoordinator.duplicateMessage(draft, this.entries),
+          onBack: () => this.requestLeaveImport(),
           onSelectImages: () => {
-            void this.recognizeScreenshots();
+            void this.startImport();
+          },
+          onSave: () => {
+            void this.confirmDrafts();
           },
           onRawTextChange: (value: string) => {
             this.ocrRawText = value;
-          }
+          },
+          onToggleDraft: (id: string) => this.toggleDraft(id),
+          onDirectionChange: (id: string, direction: EntryDirection) => this.setDraftDirection(id, direction),
+          onTextChange: (id: string, field: string, value: string) => this.setDraftText(id, field, value),
+          onResolvePage: (pageNumber: number, source?: ImportSource) => this.resolveUnclassifiedPage(pageNumber, source)
         });
       } else if (this.screen === 'editor') {
         LedgerEditorView({
@@ -200,6 +240,67 @@ struct Index {
     .height('100%')
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center);
+  }
+
+  @Builder
+  private shareImportErrorView() {
+    Column({ space: 14 }) {
+      Text('无法导入截图')
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontColor('#172B4D');
+      Text(this.sharedImportError)
+        .fontSize(14)
+        .fontColor('#52606D')
+        .textAlign(TextAlign.Center);
+      if (this.sharedImportUris.length > 0) {
+        Button('重试识别')
+          .width('100%')
+          .backgroundColor('#2857C5')
+          .fontColor('#FFFFFF')
+          .onClick(() => {
+            void this.startSharedImport();
+          });
+      }
+      Button('关闭')
+        .width('100%')
+        .backgroundColor('#F1F3F5')
+        .fontColor('#344563')
+        .onClick(() => {
+          void this.closeShareImport();
+        });
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .padding(24);
+  }
+
+  @Builder
+  private shareImportOutcomeView(saved: boolean) {
+    Column({ space: 14 }) {
+      Text(saved ? '已记入账本' : '已取消导入')
+        .fontSize(20)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(saved ? '#16845B' : '#172B4D');
+      Text(saved ? '本次导入：' + (this.shareImportOutcomeMessage.length > 0 ?
+        this.shareImportOutcomeMessage : '账目已保存在本机。') : '截图没有写入账本。')
+        .fontSize(14)
+        .fontColor('#52606D');
+      Button('完成')
+        .width('100%')
+        .backgroundColor('#2857C5')
+        .fontColor('#FFFFFF')
+        .onClick(() => {
+          void this.closeShareImport();
+        });
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .padding(24);
   }
 
   @Builder
@@ -317,21 +418,23 @@ struct Index {
   }
 
   private openOcrImport(): void {
-    this.ocrRawText = '';
-    this.ocrErrorMessage = '';
+    this.resetImportReview();
+    this.shareImportCancelled = false;
+    this.shareImportCompleted = false;
     this.screen = 'import';
-    void this.recognizeScreenshots();
+    void this.startImport();
   }
 
-  private leaveOcrImport(): void {
-    this.ocrRequestId++;
-    this.ocrLoading = false;
+  private resetImportReview(): void {
+    this.drafts = [];
+    this.unclassifiedPages = [];
     this.ocrRawText = '';
     this.ocrErrorMessage = '';
-    this.screen = 'ledger';
+    this.reviewMessage = '';
+    this.draftValidationErrors = [];
   }
 
-  private async recognizeScreenshots(): Promise<void> {
+  private async startImport(): Promise<void> {
     if (this.ocrLoading) {
       return;
     }
@@ -340,20 +443,18 @@ struct Index {
     this.ocrErrorMessage = '';
     try {
       const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-      const result = await OcrImporter.chooseAndRecognize(context);
+      const recognition = await OcrImporter.chooseAndRecognize(context);
       if (requestId !== this.ocrRequestId) {
         return;
       }
-      if (result.pages.length === 0) {
-        this.leaveOcrImport();
+      if (recognition.pages.length === 0) {
+        if (this.drafts.length === 0 && this.unclassifiedPages.length === 0) {
+          this.screen = 'ledger';
+        }
         this.showToast('未选择截图');
         return;
       }
-      this.ocrRawText = result.pages.map((page) => {
-        const pageLabel = '截图 ' + page.pageNumber;
-        const pageText = page.rawText.length > 0 ? page.rawText : '（未识别到文字）';
-        return pageLabel + '\n' + pageText;
-      }).join('\n\n');
+      this.applyImportResult(OcrImportCoordinator.parsePages(recognition.pages, this.entries));
     } catch (error) {
       if (requestId === this.ocrRequestId) {
         const businessError = error as BusinessError;
@@ -366,6 +467,215 @@ struct Index {
     }
   }
 
+  private applyImportResult(result: OcrImportResult): void {
+    this.drafts = result.drafts;
+    this.unclassifiedPages = result.unclassifiedPages;
+    this.ocrRawText = result.rawText;
+    this.reviewMessage = result.drafts.length === 0 && result.unclassifiedPages.length === 0 ?
+      '没有识别到可入账的账目。日期不明确的记录不会自动补日期。' : '';
+    this.draftValidationErrors = [];
+  }
+
+  private async startSharedImport(): Promise<void> {
+    if (this.sharedImportUris.length === 0) {
+      this.sharedImportError = '没有收到可导入的图片。';
+      return;
+    }
+    this.screen = 'import';
+    this.ocrLoading = true;
+    this.sharedImportError = '';
+    try {
+      const recognition = await OcrImporter.recognizeUris(this.sharedImportUris);
+      this.applyImportResult(OcrImportCoordinator.parsePages(recognition.pages, this.entries));
+    } catch (error) {
+      const businessError = error as BusinessError;
+      this.sharedImportError = '截图识别失败：' + businessError.message;
+    } finally {
+      this.ocrLoading = false;
+    }
+  }
+
+  private async closeShareImport(): Promise<void> {
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIExtensionContext;
+      await context.terminateSelf();
+    } catch (error) {
+      const businessError = error as BusinessError;
+      this.showToast('关闭失败：' + businessError.message);
+    }
+  }
+
+  private requestLeaveImport(): void {
+    if (this.shareImportMode) {
+      this.cancelImport();
+      return;
+    }
+    if (this.drafts.length > 0 || this.unclassifiedPages.length > 0) {
+      this.pendingDiscardConfirmation = true;
+      return;
+    }
+    this.cancelImport();
+  }
+
+  private cancelImport(): void {
+    this.ocrRequestId++;
+    this.pendingDiscardConfirmation = false;
+    this.ocrLoading = false;
+    this.resetImportReview();
+    this.shareImportCancelled = this.shareImportMode;
+    this.screen = 'ledger';
+  }
+
+  private resolveUnclassifiedPage(pageNumber: number, source?: ImportSource): void {
+    const page = this.unclassifiedPages.find((item: UnclassifiedOcrPage) => item.pageNumber === pageNumber);
+    if (page === undefined) {
+      return;
+    }
+    if (source !== undefined) {
+      const parsed = OcrImportCoordinator.parsePage(page.lines, source, this.entries, this.drafts, page.captureTime);
+      this.drafts = this.drafts.concat(parsed);
+      this.reviewMessage = parsed.length === 0 ?
+        '所选来源下没有找到带明确日期的交易记录；请检查原文或跳过该截图。' : '';
+    }
+    this.unclassifiedPages = this.unclassifiedPages.filter((item: UnclassifiedOcrPage) =>
+      item.pageNumber !== pageNumber);
+  }
+
+  private setDraftText(id: string, field: string, value: string): void {
+    this.drafts = this.drafts.map((draft: DraftEntry) => {
+      if (draft.id !== id) {
+        return draft;
+      }
+      const updated: DraftEntry = {
+        id: draft.id,
+        source: draft.source,
+        merchant: field === 'merchant' ? value : draft.merchant,
+        dateText: field === 'dateText' ? value : draft.dateText,
+        hasTime: field === 'dateText' ? hasClockTime(value) : draft.hasTime,
+        amountText: field === 'amountText' ? value : draft.amountText,
+        direction: draft.direction,
+        category: field === 'category' ? value : draft.category,
+        checked: draft.checked,
+        isRefund: draft.isRefund,
+        warnings: draft.warnings.slice()
+      };
+      if (field === 'dateText' && value.trim().length > 0) {
+        updated.warnings = updated.warnings.filter((warning: string) =>
+          warning !== '未识别到日期标题，请填写交易日期');
+      }
+      if (field === 'merchant' && value.trim().length > 0) {
+        updated.warnings = updated.warnings.filter((warning: string) => warning !== '未识别到商户或摘要');
+      }
+      return updated;
+    });
+    this.clearDraftValidationError(id);
+  }
+
+  private setDraftDirection(id: string, direction: EntryDirection): void {
+    this.drafts = this.drafts.map((draft: DraftEntry) => {
+      if (draft.id !== id) {
+        return draft;
+      }
+      return {
+        id: draft.id,
+        source: draft.source,
+        merchant: draft.merchant,
+        dateText: draft.dateText,
+        hasTime: draft.hasTime,
+        amountText: draft.amountText,
+        direction: direction,
+        category: draft.category,
+        checked: draft.checked,
+        isRefund: draft.isRefund,
+        warnings: draft.warnings.filter((warning: string) =>
+          warning !== '金额方向不明确，请选择收入或支出' &&
+          warning !== '识别到退款，请确认收入或支出方向')
+      };
+    });
+    this.clearDraftValidationError(id);
+  }
+
+  private toggleDraft(id: string): void {
+    this.drafts = this.drafts.map((draft: DraftEntry) => {
+      if (draft.id !== id) {
+        return draft;
+      }
+      return {
+        id: draft.id,
+        source: draft.source,
+        merchant: draft.merchant,
+        dateText: draft.dateText,
+        hasTime: draft.hasTime,
+        amountText: draft.amountText,
+        direction: draft.direction,
+        category: draft.category,
+        checked: !draft.checked,
+        isRefund: draft.isRefund,
+        warnings: draft.warnings.slice()
+      };
+    });
+    this.clearDraftValidationError(id);
+  }
+
+  private clearDraftValidationError(id: string): void {
+    const remaining = this.draftValidationErrors.filter((error: DraftValidationError) => error.id !== id);
+    if (remaining.length !== this.draftValidationErrors.length) {
+      this.draftValidationErrors = remaining;
+      if (remaining.length === 0 && this.reviewMessage === '请修正标记为错误的记录，或取消勾选不入账。') {
+        this.reviewMessage = '';
+      }
+    }
+  }
+
+  private confirmDrafts(): Promise<void> {
+    const plan = OcrImportCoordinator.prepareConfirmation(this.drafts, this.entries);
+    if (plan.validationErrors.length > 0) {
+      this.draftValidationErrors = plan.validationErrors;
+      this.reviewMessage = '请修正标记为错误的记录，或取消勾选不入账。';
+      return Promise.resolve();
+    }
+    this.draftValidationErrors = [];
+    if (plan.selectedCount === 0) {
+      this.reviewMessage = '请至少勾选一条有效记录。';
+      return Promise.resolve();
+    }
+    return this.saveDrafts(plan);
+  }
+
+  private async saveDrafts(plan: OcrDraftConfirmationPlan): Promise<void> {
+    try {
+      for (const entry of plan.categoryUpdates) {
+        await this.repository.updateEntry(entry);
+      }
+      await this.repository.addEntries(plan.additions);
+      await this.reloadEntries();
+      if (plan.firstSelectedAt !== undefined) {
+        this.monthCursor = plan.firstSelectedAt;
+      }
+      const messages: string[] = [];
+      if (plan.additions.length > 0) {
+        messages.push('新增 ' + plan.additions.length + ' 笔');
+      }
+      if (plan.matchedCount > 0) {
+        messages.push('匹配已有 ' + plan.matchedCount + ' 笔');
+      }
+      if (plan.categoryUpdates.length > 0) {
+        messages.push('更新分类 ' + plan.categoryUpdates.length + ' 笔');
+      }
+      this.shareImportOutcomeMessage = messages.join('，');
+      this.resetImportReview();
+      this.shareImportCompleted = this.shareImportMode;
+      this.shareImportCancelled = false;
+      this.screen = 'ledger';
+      if (!this.shareImportMode) {
+        this.showToast(this.shareImportOutcomeMessage);
+      }
+    } catch (error) {
+      const businessError = error as BusinessError;
+      this.reviewMessage = '保存失败：' + businessError.message;
+    }
+  }
+
   private async initialize(): Promise<void> {
     try {
       const context = this.getUIContext().getHostContext() as common.Context;
@@ -373,6 +683,17 @@ struct Index {
       await this.loadCycleStartDay(context);
       await this.reloadEntries();
       this.ready = true;
+      if (this.shareImportMode) {
+        this.sharedImportUris = this.sharedImageUris.slice();
+        this.sharedImageUris = [];
+        if (this.sharedImportError.length === 0) {
+          if (this.sharedImportUris.length === 0) {
+            this.sharedImportError = '没有收到可导入的图片。';
+          } else {
+            void this.startSharedImport();
+          }
+        }
+      }
     } catch (error) {
       const businessError = error as BusinessError;
       this.errorMessage = '本地账本打开失败：' + businessError.message;
@@ -630,6 +951,10 @@ struct Index {
   }
 
   private discardEditor(): void {
+    if (this.screen === 'import') {
+      this.cancelImport();
+      return;
+    }
     const editingFromStatistics = this.statisticsEditorOpen;
     this.pendingDiscardConfirmation = false;
     this.editorDirty = false;

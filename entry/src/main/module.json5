@@ -31,6 +31,31 @@
           }
         ]
       }
+    ],
+    "extensionAbilities": [
+      {
+        "name": "ShareImportExtension",
+        "srcEntry": "./ets/extensionability/ShareImportExtension.ets",
+        "type": "share",
+        "description": "接收账单截图并导入记账复核",
+        "icon": "$media:app_icon",
+        "label": "$string:app_name",
+        "exported": true,
+        "skills": [
+          {
+            "actions": [
+              "ohos.want.action.sendData"
+            ],
+            "uris": [
+              {
+                "scheme": "file",
+                "utd": "general.image",
+                "maxFileSupported": 20
+              }
+            ]
+          }
+        ]
+      }
     ]
   }
 }
