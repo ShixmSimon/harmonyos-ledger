@@ -18,12 +18,18 @@ import { LedgerDayGroup, LedgerHomeView } from './ledger/LedgerHomeView';
 import { LedgerEditorView } from './ledger/LedgerEditorView';
 import { StatisticsRange, statisticsRange } from '../services/LedgerStatistics';
 import { StatisticsView } from './statistics/StatisticsView';
+import { OcrImporter } from '../services/OcrImporter';
+import { OcrImportView } from './import/OcrImportView';
 
 
 @Entry
 @Component
 struct Index {
-  @State private screen: 'ledger' | 'editor' | 'statistics' = 'ledger';
+  @State private screen: 'ledger' | 'editor' | 'statistics' | 'import' = 'ledger';
+  @State private ocrRawText: string = '';
+  @State private ocrLoading: boolean = false;
+  @State private ocrErrorMessage: string = '';
+  private ocrRequestId: number = 0;
   @State private entries: LedgerEntry[] = [];
   @State private ready: boolean = false;
   @State private errorMessage: string = '';
@@ -62,6 +68,10 @@ struct Index {
       this.pendingDiscardConfirmation = false;
       return true;
     }
+    if (this.screen === 'import') {
+      this.leaveOcrImport();
+      return true;
+    }
     if (this.statisticsEditorOpen || this.screen === 'editor') {
       this.requestLeaveEditor();
       return true;
@@ -81,6 +91,19 @@ struct Index {
     Stack() {
       if (!this.ready) {
         this.loadingView();
+      } else if (this.screen === 'import') {
+        OcrImportView({
+          rawText: this.ocrRawText,
+          loading: this.ocrLoading,
+          errorMessage: this.ocrErrorMessage,
+          onBack: () => this.leaveOcrImport(),
+          onSelectImages: () => {
+            void this.recognizeScreenshots();
+          },
+          onRawTextChange: (value: string) => {
+            this.ocrRawText = value;
+          }
+        });
       } else if (this.screen === 'editor') {
         LedgerEditorView({
           editingId: this.editingId,
@@ -143,6 +166,7 @@ struct Index {
           onCycleStartDayChange: (day: number) => {
             void this.changeCycleStartDay(day);
           },
+          onStartImport: () => this.openOcrImport(),
           onAddEntry: () => this.openEditor(),
           onEditEntry: (entry: LedgerEntry) => this.openEditor(entry),
           onDeleteRequest: (entry: LedgerEntry) => {
@@ -290,6 +314,56 @@ struct Index {
     .padding({ left: 24, right: 24 })
     .backgroundColor('#66000000')
     .zIndex(1);
+  }
+
+  private openOcrImport(): void {
+    this.ocrRawText = '';
+    this.ocrErrorMessage = '';
+    this.screen = 'import';
+    void this.recognizeScreenshots();
+  }
+
+  private leaveOcrImport(): void {
+    this.ocrRequestId++;
+    this.ocrLoading = false;
+    this.ocrRawText = '';
+    this.ocrErrorMessage = '';
+    this.screen = 'ledger';
+  }
+
+  private async recognizeScreenshots(): Promise<void> {
+    if (this.ocrLoading) {
+      return;
+    }
+    const requestId = ++this.ocrRequestId;
+    this.ocrLoading = true;
+    this.ocrErrorMessage = '';
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const result = await OcrImporter.chooseAndRecognize(context);
+      if (requestId !== this.ocrRequestId) {
+        return;
+      }
+      if (result.pages.length === 0) {
+        this.leaveOcrImport();
+        this.showToast('未选择截图');
+        return;
+      }
+      this.ocrRawText = result.pages.map((page) => {
+        const pageLabel = '截图 ' + page.pageNumber;
+        const pageText = page.rawText.length > 0 ? page.rawText : '（未识别到文字）';
+        return pageLabel + '\n' + pageText;
+      }).join('\n\n');
+    } catch (error) {
+      if (requestId === this.ocrRequestId) {
+        const businessError = error as BusinessError;
+        this.ocrErrorMessage = '截图识别失败：' + businessError.message;
+      }
+    } finally {
+      if (requestId === this.ocrRequestId) {
+        this.ocrLoading = false;
+      }
+    }
   }
 
   private async initialize(): Promise<void> {

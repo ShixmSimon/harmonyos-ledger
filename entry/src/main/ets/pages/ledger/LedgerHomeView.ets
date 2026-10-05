@@ -28,6 +28,7 @@ export struct LedgerHomeView {
   onPreviousMonth: () => void = () => {};
   onNextMonth: () => void = () => {};
   onOpenStatistics: () => void = () => {};
+  onStartImport: () => void = () => {};
   onCycleStartDayChange: (day: number) => void = (_day: number) => {};
   onAddEntry: () => void = () => {};
   onEditEntry: (entry: LedgerEntry) => void = (_entry: LedgerEntry) => {};
@@ -65,6 +66,11 @@ export struct LedgerHomeView {
           .width('100%');
 
           this.summaryCard();
+          Button('识别账单截图')
+            .width('100%')
+            .backgroundColor('#FFFFFF')
+            .fontColor('#2457C5')
+            .onClick(() => this.onStartImport());
           this.monthSelector();
           this.transactionList();
         }

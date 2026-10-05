@@ -29,16 +29,6 @@ export interface DraftEntry {
   warnings: string[];
 }
 
-export interface OcrLine {
-  text: string;
-  left: number;
-  top: number;
-  right: number;
-  bottom: number;
-  centerY: number;
-  height: number;
-}
-
 export function formatDateTime(timestamp: number): string {
   const date = new Date(timestamp);
   const year = date.getFullYear();
