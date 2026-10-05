@@ -3,7 +3,10 @@
   "buildOption": {},
   "targets": [
     {
-      "name": "default"
+      "name": "default",
+      "output": {
+        "artifactName": "harmonyledger"
+      }
     }
   ]
 }

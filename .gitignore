@@ -53,5 +53,5 @@ build-profile.local.json5
 !entry/src/main/resources/base/media/app_icon.png
 
 .superpowers/
-notification-mock-apps/
 .DS_Store
+signing.local.json

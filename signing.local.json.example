@@ -1,0 +1,13 @@
+{
+  "name": "default",
+  "type": "HarmonyOS",
+  "material": {
+    "certpath": ".ohos/signing/debug.cer",
+    "storePassword": "<DevEco-encrypted-store-password>",
+    "keyAlias": "debugKey",
+    "keyPassword": "<DevEco-encrypted-key-password>",
+    "profile": ".ohos/signing/debug.p7b",
+    "signAlg": "SHA256withECDSA",
+    "storeFile": ".ohos/signing/debug.p12"
+  }
+}
