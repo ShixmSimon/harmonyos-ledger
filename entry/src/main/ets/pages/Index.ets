@@ -30,6 +30,7 @@ import { DraftValidationError, OcrImportResult, UnclassifiedOcrPage } from '../m
 import { indexStorage } from '../state/IndexStorage';
 import { SettingsView } from '../components/settings/SettingsView';
 import { NotificationSettingsView, PairedNotificationDevice } from '../components/settings/NotificationSettingsView';
+import { NotificationHistoryView } from './notifications/NotificationHistoryView';
 
 @Entry(indexStorage)
 @Component
@@ -42,7 +43,7 @@ struct Index {
   private ledgerRefreshRevision: number = 0;
   @State
   @Watch('onScreenChanged')
-  private screen: 'ledger' | 'editor' | 'statistics' | 'import' | 'settings' | 'notificationSettings' = 'ledger';
+  private screen: 'ledger' | 'editor' | 'statistics' | 'import' | 'settings' | 'notificationSettings' | 'notificationHistory' = 'ledger';
   @State private drafts: DraftEntry[] = [];
   @State private unclassifiedPages: UnclassifiedOcrPage[] = [];
   @State private ocrRawText: string = '';
@@ -51,6 +52,8 @@ struct Index {
   @State private reviewMessage: string = '';
   @State private draftValidationErrors: DraftValidationError[] = [];
   @State private notificationProbe: NotificationProbeSnapshot = emptyNotificationProbe();
+  @State private notificationHistoryOverlayOpen: boolean = false;
+  @State private notificationHistoryBackRequestRevision: number = 0;
   @State private notificationPermissionStatus: string = '尚未检查';
   @State private notificationSubscriptionStatus: string = '尚未检查';
   @State private pairedBluetoothDevices: PairedNotificationDevice[] = [];
@@ -114,7 +117,7 @@ struct Index {
 
   private refreshEntriesForCurrentScreen(): void {
     if (!this.ready || this.shareImportMode || this.screen === 'settings' ||
-      this.screen === 'notificationSettings') {
+      this.screen === 'notificationSettings' || this.screen === 'notificationHistory') {
       return;
     }
     void this.reloadEntriesSafely();
@@ -155,6 +158,14 @@ struct Index {
         this.selectedRankValue = '';
       } else {
         this.screen = 'ledger';
+      }
+      return true;
+    }
+    if (this.screen === 'notificationHistory') {
+      if (this.notificationHistoryOverlayOpen) {
+        this.notificationHistoryBackRequestRevision++;
+      } else {
+        this.screen = 'notificationSettings';
       }
       return true;
     }
@@ -252,6 +263,9 @@ struct Index {
           onBack: () => {
             this.screen = 'settings';
           },
+          onOpenHistory: () => {
+            this.screen = 'notificationHistory';
+          },
           onOpenPermission: () => {
             void this.openNotificationSubscriptionSettings();
           },
@@ -272,6 +286,19 @@ struct Index {
           },
           onToggleAdvancedHelp: () => {
             this.showNotificationAdvancedHelp = !this.showNotificationAdvancedHelp;
+          }
+        });
+      } else if (this.screen === 'notificationHistory') {
+        NotificationHistoryView({
+          overlayOpen: $notificationHistoryOverlayOpen,
+          backRequestRevision: $notificationHistoryBackRequestRevision,
+          onBack: () => {
+            this.notificationHistoryOverlayOpen = false;
+            this.screen = 'notificationSettings';
+          },
+          onOpenSettings: () => {
+            this.notificationHistoryOverlayOpen = false;
+            this.screen = 'notificationSettings';
           }
         });
       } else if (this.screen === 'statistics') {
