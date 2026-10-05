@@ -65,10 +65,28 @@ jobs:
           hvigorw -v
 
       - name: Build unsigned HAP
+        shell: bash
         run: |
+          set -o pipefail
           test ! -e signing.local.json
-          hvigorw assembleHap --mode module -p product=default --no-daemon
+          hvigorw assembleHap --mode module -p product=default --no-daemon 2>&1 | tee "$RUNNER_TEMP/hvigor-build.log"
           test -f entry/build/default/outputs/default/harmonyledger.hap
+
+      - name: Expose build diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+
+          log_path = Path(os.environ['RUNNER_TEMP']) / 'hvigor-build.log'
+          if log_path.is_file():
+              output = '\n'.join(log_path.read_text(errors='replace').splitlines()[-40:])[-6000:]
+              if output:
+                  output = output.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+                  print(f'::notice title=Hvigor build diagnostics::{output}')
+          PY
 
       - name: Upload HAP artifact
         uses: actions/upload-artifact@v7
