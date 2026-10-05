@@ -65,12 +65,22 @@ jobs:
           hvigorw -v
 
       - name: Build unsigned HAP
+        id: build-hap
         shell: bash
         run: |
           set -o pipefail
           test ! -e signing.local.json
           hvigorw assembleHap --mode module -p product=default --no-daemon 2>&1 | tee "$RUNNER_TEMP/hvigor-build.log"
-          test -f entry/build/default/outputs/default/harmonyledger.hap
+
+          shopt -s nullglob
+          hap_files=(entry/build/default/outputs/default/*.hap)
+          if [[ ${#hap_files[@]} -ne 1 ]]; then
+            printf 'Expected one HAP file, found %s\n' "${#hap_files[@]}"
+            printf '%s\n' "${hap_files[@]}"
+            exit 1
+          fi
+          echo "hap_path=${hap_files[0]}" >> "$GITHUB_OUTPUT"
+          echo "HAP output: ${hap_files[0]}"
 
       - name: Expose build diagnostics
         if: failure()
@@ -92,6 +102,6 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: harmonyledger-unsigned-${{ github.run_number }}
-          path: entry/build/default/outputs/default/harmonyledger.hap
+          path: ${{ steps.build-hap.outputs.hap_path }}
           if-no-files-found: error
           retention-days: 7
