@@ -8,6 +8,7 @@ export struct SettingsView {
   onCycleStartDayChange: (day: number) => void = (_day: number) => {};
   onOpenNotificationSettings: () => void = () => {};
   onExportCsv: () => void = () => {};
+  onImportCsv: () => void = () => {};
 
   build() {
     Column() {
@@ -49,9 +50,14 @@ export struct SettingsView {
               .fontSize(17)
               .fontWeight(FontWeight.Bold)
               .fontColor('#172B4D');
-            Text('导出全部账目并在系统文件选择器中选择保存位置。')
+            Text('导出全部账目，或从本应用导出的 CSV 恢复账目。导入前会检查无效记录和重复记录。')
               .fontSize(13)
               .fontColor('#52606D');
+            Button('导入本应用 CSV')
+              .width('100%')
+              .backgroundColor('#E9F1FF')
+              .fontColor('#2457C5')
+              .onClick(() => this.onImportCsv());
             Button('导出全部账目为 CSV')
               .width('100%')
               .backgroundColor('#2857C5')

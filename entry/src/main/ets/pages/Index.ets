@@ -25,6 +25,7 @@ import { StatisticsRange, statisticsRange } from '../services/LedgerStatistics';
 import { StatisticsView } from './statistics/StatisticsView';
 import { OcrImporter } from '../services/OcrImporter';
 import { CsvExporter } from '../services/CsvExporter';
+import { CsvImporter } from '../services/CsvImporter';
 import { OcrDraftConfirmationPlan, OcrImportCoordinator } from '../services/OcrImportCoordinator';
 import { OcrImportView } from './import/OcrImportView';
 import { DraftValidationError, OcrImportResult, UnclassifiedOcrPage } from '../model/OcrModels';
@@ -32,6 +33,10 @@ import { indexStorage } from '../state/IndexStorage';
 import { SettingsView } from '../components/settings/SettingsView';
 import { NotificationSettingsView, PairedNotificationDevice } from '../components/settings/NotificationSettingsView';
 import { NotificationHistoryView } from './notifications/NotificationHistoryView';
+
+interface CsvImportDialogResponse {
+  index: number;
+}
 
 @Entry(indexStorage)
 @Component
@@ -256,6 +261,9 @@ struct Index {
           },
           onExportCsv: () => {
             void this.exportCsv();
+          },
+          onImportCsv: () => {
+            void this.importCsv();
           }
         });
       } else if (this.screen === 'notificationSettings') {
@@ -1266,6 +1274,76 @@ struct Index {
     } catch (error) {
       const businessError = error as BusinessError;
       this.showToast('导出失败：' + businessError.message);
+    }
+  }
+
+  private async importCsv(): Promise<void> {
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const existingEntries = await this.repository.listEntries();
+      const preview = await CsvImporter.selectAndPreview(context, existingEntries);
+      if (preview === undefined) {
+        this.showToast('已取消 CSV 导入');
+        return;
+      }
+      this.entries = existingEntries;
+      if (preview.rowCount === 0) {
+        this.showToast('CSV 中没有账目记录');
+        return;
+      }
+
+      let message = '账目记录：' + preview.rowCount + ' 条' +
+        '\n可导入：' + preview.entries.length + ' 条' +
+        '\n与现有账本完全相同，跳过：' + preview.duplicateCount + ' 条' +
+        '\n格式无效，不导入：' + preview.invalidRows.length + ' 条';
+      preview.invalidRows.slice(0, 5).forEach((problem) => {
+        message += '\n第 ' + problem.recordNumber + ' 条数据：' + problem.message;
+      });
+      if (preview.invalidRows.length > 5) {
+        message += '\n其余 ' + (preview.invalidRows.length - 5) + ' 条无效记录未展开';
+      }
+
+      if (preview.entries.length === 0) {
+        await this.getUIContext().getPromptAction().showDialog({
+          title: 'CSV 导入预览',
+          message: message,
+          buttons: [{ text: '关闭', color: '#2457C5' }]
+        });
+        return;
+      }
+      this.getUIContext().getPromptAction().showDialog({
+        title: 'CSV 导入预览',
+        message: message,
+        buttons: [
+          { text: '取消', color: '#52606D' },
+          { text: '导入 ' + preview.entries.length + ' 条', color: '#2457C5' }
+        ]
+      }, (error: BusinessError, response: CsvImportDialogResponse) => {
+        if (error !== null) {
+          this.showToast('打开 CSV 导入预览失败：' + error.message);
+          return;
+        }
+        if (response.index !== 1) {
+          this.showToast('已取消 CSV 导入');
+          return;
+        }
+        void this.saveCsvEntries(preview.entries, preview.duplicateCount, preview.invalidRows.length);
+      });
+    } catch (error) {
+      const businessError = error as BusinessError;
+      this.showToast('CSV 导入失败：' + businessError.message);
+    }
+  }
+
+  private async saveCsvEntries(entries: LedgerEntry[], duplicateCount: number, invalidCount: number): Promise<void> {
+    try {
+      await this.repository.addEntries(entries);
+      await this.reloadEntries();
+      this.showToast('导入完成：新增 ' + entries.length + ' 条，跳过重复 ' + duplicateCount +
+        ' 条，无效 ' + invalidCount + ' 条');
+    } catch (error) {
+      const businessError = error as BusinessError;
+      this.showToast('CSV 导入失败：' + businessError.message);
     }
   }
 

@@ -24,6 +24,10 @@ flowchart LR
   Parser --> Review[逐条复核]
   Review --> Ledger[LedgerRepository]
   Ledger --> LedgerDB[(harmony_ledger.db)]
+  Index --> CsvPicker[系统文档选择器]
+  CsvPicker --> CsvImport[CsvImporter]
+  CsvImport --> CsvPreview[导入预览与确认]
+  CsvPreview --> Ledger
   Notify[系统通知订阅] --> Extension[NotificationProbeExtension]
   Extension --> Archive[NotificationArchiveRepository]
   Archive --> ArchiveDB[(notification_archive.db)]
@@ -50,11 +54,13 @@ LedgerRepository 在通知自动入账和分类更新后发出跨进程数据变
 
 ## 页面与服务流
 
-- Index.ets 协调首页、统计、手动编辑、OCR 复核、设置和通知历史。
+- Index.ets 协调首页、统计、手动编辑、OCR 复核、CSV 导入、设置和通知历史。
 - LedgerStatistics.ets 对已加载的账目按本地日期和所选记账周期做纯计算；统计视图负责图表与排行展示。
-- CsvExporter.ets 通过系统文档保存选择器写出 UTF-8 CSV，不自行选择或上传目标路径。
+- CsvExporter.ets 通过系统文档保存选择器写出 UTF-8 CSV；CsvImporter.ets 通过系统文档选择器读取用户选择的 CSV 并生成导入预览。文件只在导入流程内读取，不长期保留。
 - ShareImportExtension 接收用户从其他应用明确分享过来的图片 URI；图片仍由 OCR 导入流程处理。
 
-## CSV 处理
+## CSV 导入与导出
 
-CSV 每个字段以双引号包裹，字段内部双引号重复转义。可能被表格软件解释为公式的前导字符会额外加单引号。表格软件处理规则各不相同，且重新保存 CSV 可能改变转义行为；导出文件仍应先用文本编辑器或目标表格软件检查。参见 [OWASP CSV Injection](https://owasp.org/www-community/attacks/CSV_Injection)。
+导入和导出共用固定表头、来源标签及 CSV 字段转义规则。导入支持 UTF-8 BOM、逗号分隔、双引号包裹、双引号重复转义和带引号字段中的换行；表头不匹配时拒绝文件。日期、金额、方向或来源不合法的行会列入预览，不写入账本。
+
+导入前按导出的日期精度、方向、金额、商户、分类、来源和备注与现有账目比较。完全相同的现有记录会跳过并计数；导入文件内部重复的行保留。用户确认后才批量写入，数据库结构不变。CSV 每个字段以双引号包裹；可能被表格软件解释为公式的前导字符会转义。表格软件处理规则各不相同，重新保存文件可能改变转义行为。参见 [OWASP CSV Injection](https://owasp.org/www-community/attacks/CSV_Injection)。

@@ -1,34 +1,22 @@
 # 仓库开发约定
 
-## 语言与工程边界
+## 工程边界
 
-- 文档、提交说明和新增代码注释优先使用中文。
-- 保持 HarmonyOS 7 / API 26、Stage 模型、ArkTS / ArkUI，以及应用包名 com.gyg.harmonyledger。
-- 先定位负责该功能的页面、组件、服务或数据仓库；只改完成功能所需的文件。
-- 页面状态由 pages/ 管理；components/ 提供受控 UI；services/ 放 OCR、解析和统计计算；data/ 放 ArkData 访问；model/ 放共享类型和格式化逻辑。
-- Index.ets 是当前应用流程协调入口。扩展能力放在 extensionability/，启动与前后台生命周期放在 entryability/。
+- 使用 HarmonyOS 7 / API 26、Stage 模型、ArkTS / ArkUI，应用包名为 `com.gyg.harmonyledger`。
+- 页面和跨页面流程由 `entry/src/main/ets/pages/` 协调；受控展示组件放在 `components/`；纯业务处理放在 `services/`；数据库访问放在 `data/`；共享类型和格式化逻辑放在 `model/`。
+- 修改前先定位负责该功能的模块，只改完成需求所需的文件。不要把数据库访问或业务计算移入展示组件。
+- 页面、服务和数据流见[架构与数据流](docs/architecture.md)；OCR 和银行通知规则见[OCR 与通知处理规则](docs/ocr-and-notifications.md)；构建、签名和版本号见[构建与签名](docs/build-and-signing.md)。
 
-## 必须保留的行为
+## 数据约定
 
-- 账本数据库名 harmony_ledger.db、ledger_entries 表和既有字段属于兼容契约。修改前先说明数据迁移影响。
-- 金额以整数分存储；不要用浮点数保存账目金额。
-- OCR 记录必须由用户复核。没有可靠日期的记录不入账；只有日期时不要虚构时分；商户使用识别出的原文。
-- 微信、支付宝、工商银行截图解析规则分别维护；未知来源应要求用户确认，不能静默猜测。
-- 截图识别的重复项按既有规则核对。通知自动记账按方向、金额和交易分钟查重；命中时不新增条目，只在既有分类为“其他”时更新为明确分类。
-- 通知归档与自动入账使用独立失败路径；通知标题和正文属于敏感本地数据。
-- 不增加账号、上传或云同步，除非先修改并批准产品方案。
+- 数据库名 `harmony_ledger.db`、`ledger_entries` 表和现有字段是兼容契约。修改前说明迁移影响；不得通过删除数据库绕过迁移。
+- 金额以整数分保存。截图 OCR 草稿须经用户复核；无可靠日期的记录不入账，不虚构时分，商户保留识别原文。
+- 微信、支付宝和工商银行截图解析分别维护；未知来源要求用户确认。通知自动入账按既有规则查重，命中后不新增条目；只有原分类为“其他”时才允许补充明确分类。
+- 通知归档和通知自动记账保持独立失败路径。通知标题和正文属于敏感本地数据。
 
-## 隐私与本机配置
+## 隐私与验证
 
-不要提交真实账单、OCR 文本、截图、数据库、CSV 导出、HAP、证书、私钥、签名口令或含凭据的构建配置。签名配置只保存在本机。notification-mock-apps/ 是独立工程，保持在本仓库之外。
-
-## 构建与核对
-
-在 PowerShell 中设置本机 DevEco Studio 安装目录和 HarmonyOS SDK 26 后执行：
-
-~~~powershell
-$env:DEVECO_SDK_HOME = '<HarmonyOS SDK 26 路径>'
-& '<DevEco Studio 路径>\tools\hvigor\bin\hvigorw.bat' --mode module -p product=default assembleHap
-~~~
-
-构建后检查输出和 git diff --check。代码功能变更应在可用的 HarmonyOS 7 / API 26 真机上核对受影响流程；真机不可用时如实记录未完成项。默认签名配置留空，发布前必须在本机完成签名并核对安装包。
+- 账目、截图、OCR 原文、通知内容、数据库、导出的 CSV、HAP、签名材料和含凭据的配置都不得提交。账号、上传和云同步不在产品范围内，除非产品方案另行确认。
+- `signing.local.json` 仅保存在本机且不进入版本控制；`notification-mock-apps/` 是独立工程，保持在仓库之外。
+- 文档、提交说明和新增代码注释优先使用中文。构建与签名步骤遵循[构建与签名](docs/build-and-signing.md)；交付前检查构建结果及 `git diff --check`。
+- 功能变更后，在可用的 HarmonyOS 7 / API 26 真机核对受影响流程；设备不可用时，在交付说明中写明未完成的设备验证。
