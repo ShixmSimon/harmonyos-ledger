@@ -1,0 +1,70 @@
+name: Build unsigned HarmonyOS HAP
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: unsigned-hap-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out full Git history
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install HarmonyOS 26 command line tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          install_root="$RUNNER_TEMP/harmonyos-cli"
+          mkdir -p "$install_root"
+          cd "$install_root"
+          df -h "$RUNNER_TEMP"
+
+          curl --fail --location --retry 3 --retry-delay 2 \
+            'https://github.com/ErBWs/ohos-sdk/releases/download/26.0.0.821/ohos-sdk-linux-amd64.tar.gz.aa' \
+            --output commandline-tools.tar.gz.aa
+          curl --fail --location --retry 3 --retry-delay 2 \
+            'https://github.com/ErBWs/ohos-sdk/releases/download/26.0.0.821/ohos-sdk-linux-amd64.tar.gz.ab' \
+            --output commandline-tools.tar.gz.ab
+
+          cat commandline-tools.tar.gz.aa commandline-tools.tar.gz.ab > commandline-tools.tar.gz
+          echo '0cbdf7ac5c1be1e42694d448ffaee0c0be0ba9a948197e2bc5b61ca5bdc481f2  commandline-tools.tar.gz' | sha256sum --check --strict
+          rm commandline-tools.tar.gz.aa commandline-tools.tar.gz.ab
+          tar -xzf commandline-tools.tar.gz
+          rm commandline-tools.tar.gz
+
+          echo "$install_root/command-line-tools/tool/node/bin" >> "$GITHUB_PATH"
+          echo "$install_root/command-line-tools/bin" >> "$GITHUB_PATH"
+          echo "HOS_SDK_HOME=$install_root/command-line-tools/sdk" >> "$GITHUB_ENV"
+          echo "OHOS_NDK_HOME=$install_root/command-line-tools/sdk/default/openharmony" >> "$GITHUB_ENV"
+          df -h "$RUNNER_TEMP"
+
+      - name: Build unsigned HAP
+        run: |
+          test ! -e signing.local.json
+          hvigorw --mode module -p product=default assembleHap --no-daemon --accept-license
+          test -f entry/build/default/outputs/default/harmonyledger.hap
+
+      - name: Upload HAP artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: harmonyledger-unsigned-${{ github.run_number }}
+          path: entry/build/default/outputs/default/harmonyledger.hap
+          if-no-files-found: error
+          retention-days: 7
