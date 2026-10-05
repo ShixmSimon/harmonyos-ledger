@@ -1,0 +1,24 @@
+# DevEco Studio and Hvigor
+.idea/
+.vscode/
+.deveco/
+DevEcoStudio/
+oh_modules/
+**/oh_modules/
+**/build/
+**/.hvigor/
+local.properties
+*.hap
+*.har
+*.log
+*.cer
+*.p12
+*.p7b
+*.keystore
+*.jks
+*signing*.json
+build-profile.local.json5
+**/build-profile.local.json5
+.superpowers/
+notification-mock-apps/
+.DS_Store

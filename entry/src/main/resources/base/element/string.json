@@ -1,0 +1,12 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "本地记账应用"
+    },
+    {
+      "name": "ability_desc",
+      "value": "本地记账主页面"
+    }
+  ]
+}
