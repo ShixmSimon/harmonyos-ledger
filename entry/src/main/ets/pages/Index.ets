@@ -1,5 +1,6 @@
 import { common } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
+import { preferences } from '@kit.ArkData';
 import { LedgerRepository } from '../data/LedgerRepository';
 import {
   EntryDirection,
@@ -15,20 +16,20 @@ import {
 } from '../model/LedgerModels';
 import { LedgerDayGroup, LedgerHomeView } from './ledger/LedgerHomeView';
 import { LedgerEditorView } from './ledger/LedgerEditorView';
+import { StatisticsRange, statisticsRange } from '../services/LedgerStatistics';
+import { StatisticsView } from './statistics/StatisticsView';
 
-interface DateRange {
-  start: number;
-  endExclusive: number;
-}
 
 @Entry
 @Component
 struct Index {
-  @State private screen: 'ledger' | 'editor' = 'ledger';
+  @State private screen: 'ledger' | 'editor' | 'statistics' = 'ledger';
   @State private entries: LedgerEntry[] = [];
   @State private ready: boolean = false;
   @State private errorMessage: string = '';
   @State private pendingDeleteId: string = '';
+  @State private statisticsEditorOpen: boolean = false;
+  @State private selectedRankValue: string = '';
   @State private pendingDiscardConfirmation: boolean = false;
   @State private editorDirty: boolean = false;
   @State private editorDateError: string = '';
@@ -44,7 +45,8 @@ struct Index {
   @State private formCategory: string = '其他';
   @State private formNote: string = '';
 
-  private cycleStartDay: number = 15;
+  @State private cycleStartDay: number = 15;
+  private settingsPreferences: preferences.Preferences | undefined = undefined;
   private repository: LedgerRepository = new LedgerRepository();
 
   aboutToAppear(): void {
@@ -60,8 +62,16 @@ struct Index {
       this.pendingDiscardConfirmation = false;
       return true;
     }
-    if (this.screen === 'editor') {
+    if (this.statisticsEditorOpen || this.screen === 'editor') {
       this.requestLeaveEditor();
+      return true;
+    }
+    if (this.screen === 'statistics') {
+      if (this.selectedRankValue.length > 0) {
+        this.selectedRankValue = '';
+      } else {
+        this.screen = 'ledger';
+      }
       return true;
     }
     return false;
@@ -93,6 +103,20 @@ struct Index {
             this.formDirection = direction;
           }
         });
+      } else if (this.screen === 'statistics') {
+        StatisticsView({
+          entries: this.entries,
+          cycleStartDay: this.cycleStartDay,
+          selectedRankValue: $selectedRankValue,
+          onBack: () => {
+            this.selectedRankValue = '';
+            this.screen = 'ledger';
+          },
+          onEditEntry: (entry: LedgerEntry) => this.openEditor(entry, true),
+          onDeleteRequest: (entry: LedgerEntry) => {
+            this.pendingDeleteId = entry.id;
+          }
+        });
       } else {
         LedgerHomeView({
           monthEntries: this.monthEntries(),
@@ -100,6 +124,7 @@ struct Index {
           incomeTotalFen: this.monthTotal('income'),
           expenseTotalFen: this.monthTotal('expense'),
           monthLabel: this.monthLabel(),
+          cycleStartDay: this.cycleStartDay,
           scrollOffset: this.ledgerScrollOffset,
           restoreScrollOnAppear: this.restoreLedgerScrollOnAppear,
           onSaveScroll: (offset: number) => {
@@ -111,6 +136,13 @@ struct Index {
           },
           onPreviousMonth: () => this.moveMonth(-1),
           onNextMonth: () => this.moveMonth(1),
+          onOpenStatistics: () => {
+            this.selectedRankValue = '';
+            this.screen = 'statistics';
+          },
+          onCycleStartDayChange: (day: number) => {
+            void this.changeCycleStartDay(day);
+          },
           onAddEntry: () => this.openEditor(),
           onEditEntry: (entry: LedgerEntry) => this.openEditor(entry),
           onDeleteRequest: (entry: LedgerEntry) => {
@@ -118,6 +150,9 @@ struct Index {
           },
           sourceLabel: (source: EntrySource) => this.sourceLabel(source)
         });
+      }
+      if (this.statisticsEditorOpen) {
+        this.statisticsEditorOverlay();
       }
       if (this.pendingDeleteId.length > 0) {
         this.deleteConfirmationView();
@@ -141,6 +176,37 @@ struct Index {
     .height('100%')
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center);
+  }
+
+  @Builder
+  private statisticsEditorOverlay() {
+    Column() {
+      LedgerEditorView({
+        editingId: this.editingId,
+        merchant: this.formMerchant,
+        dateText: this.formDateText,
+        amountText: this.formAmountText,
+        entryDirection: this.formDirection,
+        category: this.formCategory,
+        note: this.formNote,
+        dateError: this.editorDateError,
+        amountError: this.editorAmountError,
+        onBack: () => this.requestLeaveEditor(),
+        onSave: () => {
+          void this.saveEditor();
+        },
+        onChooseDate: () => this.chooseEditorDate(),
+        onFieldChange: (field: string, value: string) => this.setFormValue(field, value),
+        onDirectionChange: (direction: EntryDirection) => {
+          this.editorDirty = this.editorDirty || this.formDirection !== direction;
+          this.formDirection = direction;
+        }
+      });
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor('#F6F7F9')
+    .zIndex(1);
   }
 
   @Builder
@@ -230,6 +296,7 @@ struct Index {
     try {
       const context = this.getUIContext().getHostContext() as common.Context;
       await this.repository.open(context);
+      await this.loadCycleStartDay(context);
       await this.reloadEntries();
       this.ready = true;
     } catch (error) {
@@ -242,20 +309,36 @@ struct Index {
     this.entries = await this.repository.listEntries();
   }
 
-  private monthRange(): DateRange {
-    const selected = new Date(this.monthCursor);
-    const selectedDay = new Date(selected.getFullYear(), selected.getMonth(), selected.getDate()).getTime();
-    let start = this.cycleStart(selected.getFullYear(), selected.getMonth());
-    if (start.getTime() > selectedDay) {
-      start = this.cycleStart(selected.getFullYear(), selected.getMonth() - 1);
+  private async loadCycleStartDay(context: common.Context): Promise<void> {
+    try {
+      this.settingsPreferences = await preferences.getPreferences(context, 'ledger_settings');
+      const savedDay = this.settingsPreferences.getSync('cycleStartDay', 15);
+      if (typeof savedDay === 'number' && savedDay >= 1 && savedDay <= 31) {
+        this.cycleStartDay = savedDay;
+      }
+    } catch (error) {
+      this.cycleStartDay = 15;
     }
-    const end = this.cycleStart(start.getFullYear(), start.getMonth() + 1);
-    return { start: start.getTime(), endExclusive: end.getTime() };
   }
 
-  private cycleStart(year: number, month: number): Date {
-    const lastDay = new Date(year, month + 1, 0).getDate();
-    return new Date(year, month, Math.min(this.cycleStartDay, lastDay));
+  private async changeCycleStartDay(day: number): Promise<void> {
+    this.cycleStartDay = day;
+    try {
+      if (this.settingsPreferences === undefined) {
+        const context = this.getUIContext().getHostContext() as common.Context;
+        this.settingsPreferences = await preferences.getPreferences(context, 'ledger_settings');
+      }
+      await this.settingsPreferences.put('cycleStartDay', day);
+      await this.settingsPreferences.flush();
+      this.showToast('周期起始日已设为每月 ' + day + ' 号');
+    } catch (error) {
+      const businessError = error as BusinessError;
+      this.showToast('保存周期起始日失败：' + businessError.message);
+    }
+  }
+
+  private monthRange(): StatisticsRange {
+    return statisticsRange('month', this.monthCursor, 0, 0, this.cycleStartDay);
   }
 
   private monthEntries(): LedgerEntry[] {
@@ -323,7 +406,7 @@ struct Index {
     return '手动';
   }
 
-  private openEditor(entry?: LedgerEntry): void {
+  private openEditor(entry?: LedgerEntry, fromStatistics: boolean = false): void {
     this.errorMessage = '';
     this.editorDirty = false;
     this.editorDateError = '';
@@ -345,7 +428,12 @@ struct Index {
       this.formCategory = entry.category;
       this.formNote = entry.note;
     }
-    this.screen = 'editor';
+    if (fromStatistics) {
+      this.statisticsEditorOpen = true;
+    } else {
+      this.statisticsEditorOpen = false;
+      this.screen = 'editor';
+    }
   }
 
   private setFormValue(field: string, value: string): void {
@@ -415,9 +503,16 @@ struct Index {
         await this.repository.addEntry(entry);
       }
       await this.reloadEntries();
-      this.monthCursor = date;
+      const editingFromStatistics = this.statisticsEditorOpen;
+      if (!editingFromStatistics) {
+        this.monthCursor = date;
+      }
       this.editorDirty = false;
-      this.screen = 'ledger';
+      if (editingFromStatistics) {
+        this.statisticsEditorOpen = false;
+      } else {
+        this.screen = 'ledger';
+      }
       this.showToast('账目已保存');
     } catch (error) {
       const businessError = error as BusinessError;
@@ -461,11 +556,16 @@ struct Index {
   }
 
   private discardEditor(): void {
+    const editingFromStatistics = this.statisticsEditorOpen;
     this.pendingDiscardConfirmation = false;
     this.editorDirty = false;
     this.editorDateError = '';
     this.editorAmountError = '';
-    this.screen = 'ledger';
+    if (editingFromStatistics) {
+      this.statisticsEditorOpen = false;
+    } else {
+      this.screen = 'ledger';
+    }
   }
 
   private showToast(message: string): void {

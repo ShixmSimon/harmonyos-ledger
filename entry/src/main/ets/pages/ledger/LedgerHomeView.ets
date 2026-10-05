@@ -1,5 +1,6 @@
 import { EntrySource, LedgerEntry, formatDateOnly, formatDateTime, formatMoney } from '../../model/LedgerModels';
 import { LedgerEntryCard } from '../../components/LedgerEntryCard';
+import { CycleStartDaySelector } from '../../components/settings/CycleStartDaySelector';
 
 export interface LedgerDayGroup {
   dateKey: string;
@@ -15,6 +16,7 @@ export struct LedgerHomeView {
   @Prop incomeTotalFen: number = 0;
   @Prop expenseTotalFen: number = 0;
   @Prop monthLabel: string = '';
+  @Prop cycleStartDay: number = 15;
   @Prop scrollOffset: number = 0;
   @Prop restoreScrollOnAppear: boolean = false;
 
@@ -25,6 +27,8 @@ export struct LedgerHomeView {
   onRestoreScrollComplete: () => void = () => {};
   onPreviousMonth: () => void = () => {};
   onNextMonth: () => void = () => {};
+  onOpenStatistics: () => void = () => {};
+  onCycleStartDayChange: (day: number) => void = (_day: number) => {};
   onAddEntry: () => void = () => {};
   onEditEntry: (entry: LedgerEntry) => void = (_entry: LedgerEntry) => {};
   onDeleteRequest: (entry: LedgerEntry) => void = (_entry: LedgerEntry) => {};
@@ -45,6 +49,18 @@ export struct LedgerHomeView {
                 .fontColor('#7B8794');
             }
             Blank();
+            Button('统计')
+              .backgroundColor('#E9F1FF')
+              .fontColor('#2457C5')
+              .onClick(() => {
+                this.onSaveScroll(this.scroller.currentOffset().yOffset);
+                this.onOpenStatistics();
+              });
+            CycleStartDaySelector({
+              startDay: this.cycleStartDay,
+              onChange: (day: number) => this.onCycleStartDayChange(day)
+            });
+
           }
           .width('100%');
 
