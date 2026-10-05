@@ -2,6 +2,8 @@ import { common } from '@kit.AbilityKit';
 import { relationalStore } from '@kit.ArkData';
 import { EntryDirection, EntrySource, LedgerEntry } from '../model/LedgerModels';
 
+const LEDGER_ENTRIES_CHANGED_EVENT: string = 'dataability:///com.gyg.harmonyledger/ledger_entries';
+
 export class LedgerRepository {
   private store: relationalStore.RdbStore | undefined = undefined;
 
@@ -73,6 +75,45 @@ export class LedgerRepository {
   async addEntry(entry: LedgerEntry): Promise<void> {
     const store = this.requireStore();
     await store.insert('ledger_entries', this.toValues(entry));
+  }
+
+  async addNotificationEntry(entry: LedgerEntry): Promise<void> {
+    const store = this.requireStore();
+    const minuteStart = Math.floor(entry.happenedAt / 60000) * 60000;
+    const matches = await store.querySql(
+      'SELECT id, category FROM ledger_entries WHERE happened_at >= ? AND happened_at < ? ' +
+      'AND amount_fen = ? AND direction = ? AND has_time = 1 LIMIT 1',
+      [minuteStart, minuteStart + 60000, entry.amountFen, entry.direction]
+    );
+    let existingId = '';
+    let existingCategory = '';
+    try {
+      if (matches.goToNextRow()) {
+        existingId = matches.getString(matches.getColumnIndex('id'));
+        existingCategory = matches.getString(matches.getColumnIndex('category'));
+      }
+    } finally {
+      matches.close();
+    }
+    if (existingId.length > 0) {
+      if (existingCategory === '其他' && entry.category !== '其他') {
+        const predicates = new relationalStore.RdbPredicates('ledger_entries');
+        predicates.equalTo('id', existingId);
+        await store.update({ category: entry.category }, predicates);
+        store.emit(LEDGER_ENTRIES_CHANGED_EVENT);
+      }
+      return;
+    }
+    await store.insert('ledger_entries', this.toValues(entry), relationalStore.ConflictResolution.ON_CONFLICT_IGNORE);
+    store.emit(LEDGER_ENTRIES_CHANGED_EVENT);
+  }
+
+  observeLedgerEntriesChanged(observer: () => void): void {
+    this.requireStore().on(LEDGER_ENTRIES_CHANGED_EVENT, true, observer);
+  }
+
+  removeLedgerEntriesChangedObserver(observer: () => void): void {
+    this.requireStore().off(LEDGER_ENTRIES_CHANGED_EVENT, true, observer);
   }
 
   async addEntries(entries: LedgerEntry[]): Promise<void> {

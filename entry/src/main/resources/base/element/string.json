@@ -7,6 +7,14 @@
     {
       "name": "ability_desc",
       "value": "本地记账主页面"
+    },
+    {
+      "name": "bluetooth_subscription_reason",
+      "value": "用于查找已配对的穿戴设备并订阅通知转发"
+    },
+    {
+      "name": "SUBSCRIBE_NOTIFICATION_reason1",
+      "value": "用于识别银行收支通知并在本机记账"
     }
   ]
 }

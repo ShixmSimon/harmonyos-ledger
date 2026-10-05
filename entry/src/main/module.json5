@@ -10,6 +10,24 @@
     "deliveryWithInstall": true,
     "installationFree": false,
     "pages": "$profile:main_pages",
+    "requestPermissions": [
+      {
+        "name": "ohos.permission.ACCESS_BLUETOOTH",
+        "reason": "$string:bluetooth_subscription_reason",
+        "usedScene": {
+          "when": "inuse",
+          "abilities": ["EntryAbility"]
+        }
+      },
+      {
+        "name": "ohos.permission.SUBSCRIBE_NOTIFICATION",
+        "reason": "$string:SUBSCRIBE_NOTIFICATION_reason1",
+        "usedScene": {
+          "when": "always",
+          "abilities": ["EntryAbility", "NotificationProbeExtension"]
+        }
+      }
+    ],
     "abilities": [
       {
         "name": "EntryAbility",
@@ -22,12 +40,8 @@
         "exported": true,
         "skills": [
           {
-            "entities": [
-              "entity.system.home"
-            ],
-            "actions": [
-              "action.system.home"
-            ]
+            "entities": ["entity.system.home"],
+            "actions": ["action.system.home"]
           }
         ]
       }
@@ -43,9 +57,7 @@
         "exported": true,
         "skills": [
           {
-            "actions": [
-              "ohos.want.action.sendData"
-            ],
+            "actions": ["ohos.want.action.sendData"],
             "uris": [
               {
                 "scheme": "file",
@@ -55,6 +67,15 @@
             ]
           }
         ]
+      },
+      {
+        "name": "NotificationProbeExtension",
+        "srcEntry": "./ets/extensionability/NotificationProbeExtension.ets",
+        "type": "notificationSubscriber",
+        "description": "接收通知并按银行规则自动记账",
+        "icon": "$media:app_icon",
+        "label": "$string:app_name",
+        "exported": true
       }
     ]
   }

@@ -1,6 +1,9 @@
-import { common } from '@kit.AbilityKit';
+import { abilityAccessCtrl, common } from '@kit.AbilityKit';
+import { connection } from '@kit.ConnectivityKit';
+import { notificationExtensionSubscription } from '@kit.NotificationKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { preferences } from '@kit.ArkData';
+import { NotificationProbeSnapshot, clearNotificationProbe, emptyNotificationProbe, loadNotificationProbe } from '../services/NotificationProbeStore';
 import { LedgerRepository } from '../data/LedgerRepository';
 import {
   DraftEntry,
@@ -25,6 +28,8 @@ import { OcrDraftConfirmationPlan, OcrImportCoordinator } from '../services/OcrI
 import { OcrImportView } from './import/OcrImportView';
 import { DraftValidationError, OcrImportResult, UnclassifiedOcrPage } from '../model/OcrModels';
 import { indexStorage } from '../state/IndexStorage';
+import { SettingsView } from '../components/settings/SettingsView';
+import { NotificationSettingsView, PairedNotificationDevice } from '../components/settings/NotificationSettingsView';
 
 @Entry(indexStorage)
 @Component
@@ -32,7 +37,12 @@ struct Index {
   @LocalStorageLink('shareImportMode') private shareImportMode: boolean = false;
   @LocalStorageLink('sharedImageUris') private sharedImageUris: string[] = [];
   @LocalStorageLink('shareImportError') private sharedImportError: string = '';
-  @State private screen: 'ledger' | 'editor' | 'statistics' | 'import' = 'ledger';
+  @LocalStorageLink('ledgerRefreshRevision')
+  @Watch('onLedgerRefreshRevisionChanged')
+  private ledgerRefreshRevision: number = 0;
+  @State
+  @Watch('onScreenChanged')
+  private screen: 'ledger' | 'editor' | 'statistics' | 'import' | 'settings' | 'notificationSettings' = 'ledger';
   @State private drafts: DraftEntry[] = [];
   @State private unclassifiedPages: UnclassifiedOcrPage[] = [];
   @State private ocrRawText: string = '';
@@ -40,6 +50,11 @@ struct Index {
   @State private ocrErrorMessage: string = '';
   @State private reviewMessage: string = '';
   @State private draftValidationErrors: DraftValidationError[] = [];
+  @State private notificationProbe: NotificationProbeSnapshot = emptyNotificationProbe();
+  @State private notificationPermissionStatus: string = '尚未检查';
+  @State private notificationSubscriptionStatus: string = '尚未检查';
+  @State private pairedBluetoothDevices: PairedNotificationDevice[] = [];
+  @State private showNotificationAdvancedHelp: boolean = false;
   @State private shareImportCompleted: boolean = false;
   @State private shareImportCancelled: boolean = false;
   @State private shareImportOutcomeMessage: string = '';
@@ -69,9 +84,49 @@ struct Index {
   @State private cycleStartDay: number = 15;
   private settingsPreferences: preferences.Preferences | undefined = undefined;
   private repository: LedgerRepository = new LedgerRepository();
+  private ledgerEntriesChangedObserver: (() => void) | undefined = undefined;
+  private pendingLedgerEntriesRefresh: boolean = false;
 
   aboutToAppear(): void {
     void this.initialize();
+  }
+
+  aboutToDisappear(): void {
+    if (this.ledgerEntriesChangedObserver !== undefined) {
+      this.repository.removeLedgerEntriesChangedObserver(this.ledgerEntriesChangedObserver);
+      this.ledgerEntriesChangedObserver = undefined;
+    }
+  }
+
+  private onLedgerRefreshRevisionChanged(): void {
+    if (this.screen === 'settings' || this.screen === 'notificationSettings') {
+      void this.refreshNotificationProbe();
+    }
+    this.refreshEntriesForCurrentScreen();
+  }
+
+  private onScreenChanged(): void {
+    if (this.screen === 'settings' || this.screen === 'notificationSettings') {
+      void this.refreshNotificationProbe();
+    }
+    this.refreshEntriesForCurrentScreen();
+  }
+
+  private refreshEntriesForCurrentScreen(): void {
+    if (!this.ready || this.shareImportMode || this.screen === 'settings' ||
+      this.screen === 'notificationSettings') {
+      return;
+    }
+    void this.reloadEntriesSafely();
+  }
+
+  private async reloadEntriesSafely(): Promise<void> {
+    try {
+      await this.reloadEntries();
+    } catch (error) {
+      const businessError = error as BusinessError;
+      this.showToast('刷新账目失败：' + businessError.message);
+    }
   }
 
   onBackPress(): boolean {
@@ -101,6 +156,14 @@ struct Index {
       } else {
         this.screen = 'ledger';
       }
+      return true;
+    }
+    if (this.screen === 'notificationSettings') {
+      this.screen = 'settings';
+      return true;
+    }
+    if (this.screen === 'settings') {
+      this.screen = 'ledger';
       return true;
     }
     return false;
@@ -166,6 +229,51 @@ struct Index {
             this.formDirection = direction;
           }
         });
+      } else if (this.screen === 'settings') {
+        SettingsView({
+          cycleStartDay: this.cycleStartDay,
+          onBack: () => {
+            this.screen = 'ledger';
+          },
+          onCycleStartDayChange: (day: number) => {
+            void this.changeCycleStartDay(day);
+          },
+          onOpenNotificationSettings: () => {
+            this.screen = 'notificationSettings';
+          }
+        });
+      } else if (this.screen === 'notificationSettings') {
+        NotificationSettingsView({
+          permissionStatus: this.notificationPermissionStatus,
+          subscriptionStatus: this.notificationSubscriptionStatus,
+          probe: this.notificationProbe,
+          pairedDevices: this.pairedBluetoothDevices,
+          advancedHelp: this.showNotificationAdvancedHelp,
+          onBack: () => {
+            this.screen = 'settings';
+          },
+          onOpenPermission: () => {
+            void this.openNotificationSubscriptionSettings();
+          },
+          onRefresh: () => {
+            void this.refreshNotificationProbe();
+          },
+          onFindDevices: () => {
+            void this.loadPairedBluetoothDevices();
+          },
+          onSubscribeDevice: (device: PairedNotificationDevice) => {
+            void this.subscribeToPairedDevice(device);
+          },
+          onShowRecentNotification: () => {
+            void this.showNotificationProbeDetails();
+          },
+          onClearDiagnostics: () => {
+            void this.clearNotificationProbeState();
+          },
+          onToggleAdvancedHelp: () => {
+            this.showNotificationAdvancedHelp = !this.showNotificationAdvancedHelp;
+          }
+        });
       } else if (this.screen === 'statistics') {
         StatisticsView({
           entries: this.entries,
@@ -207,6 +315,9 @@ struct Index {
             void this.changeCycleStartDay(day);
           },
           onStartImport: () => this.openOcrImport(),
+          onOpenSettings: () => {
+            this.screen = 'settings';
+          },
           onAddEntry: () => this.openEditor(),
           onEditEntry: (entry: LedgerEntry) => this.openEditor(entry),
           onDeleteRequest: (entry: LedgerEntry) => {
@@ -676,13 +787,154 @@ struct Index {
     }
   }
 
+  private async openNotificationSubscriptionSettings(): Promise<void> {
+    this.notificationPermissionStatus = '正在打开通知授权设置…';
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      await notificationExtensionSubscription.openSubscriptionSettingsWithResult(context);
+      await this.refreshNotificationProbe();
+    } catch (error) {
+      const businessError = error as BusinessError;
+      this.notificationPermissionStatus = '打开失败（' + businessError.code + '）：' + businessError.message;
+    }
+  }
+
+  private async loadPairedBluetoothDevices(): Promise<void> {
+    this.notificationSubscriptionStatus = '正在读取已配对设备…';
+    this.pairedBluetoothDevices = [];
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const grant = await abilityAccessCtrl.createAtManager().requestPermissionsFromUser(
+        context, ['ohos.permission.ACCESS_BLUETOOTH']);
+      if (grant.authResults[0] !== 0) {
+        this.notificationSubscriptionStatus = '未获得蓝牙访问权限';
+        return;
+      }
+      const addresses = connection.getPairedDevices();
+      const devices: PairedNotificationDevice[] = [];
+      for (const address of addresses) {
+        let label = address;
+        try {
+          const name = connection.getRemoteDeviceName(address);
+          if (name.length > 0) {
+            label = name + '（' + address.slice(-5) + '）';
+          }
+        } catch (_error) {
+          label = address;
+        }
+        devices.push({ address: address, label: label });
+      }
+      this.pairedBluetoothDevices = devices;
+      this.notificationSubscriptionStatus = devices.length > 0 ?
+        '请选择需要订阅通知的穿戴设备' : '未找到已配对蓝牙设备';
+    } catch (error) {
+      const businessError = error as BusinessError;
+      this.notificationSubscriptionStatus = '读取设备失败（' + businessError.code + '）：' + businessError.message;
+    }
+  }
+
+  private async subscribeToPairedDevice(device: PairedNotificationDevice): Promise<void> {
+    this.notificationSubscriptionStatus = '正在订阅 ' + device.label + '…';
+    try {
+      await notificationExtensionSubscription.subscribe([{
+        type: notificationExtensionSubscription.SubscribeType.BLUETOOTH,
+        addr: device.address
+      }]);
+      await this.refreshNotificationProbe();
+    } catch (error) {
+      const businessError = error as BusinessError;
+      this.notificationSubscriptionStatus = '订阅失败（' + businessError.code + '）：' + businessError.message;
+    }
+  }
+
+  private async refreshNotificationProbe(): Promise<void> {
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    try {
+      this.notificationProbe = await loadNotificationProbe(context);
+    } catch (error) {
+      const businessError = error as BusinessError;
+      this.notificationPermissionStatus = '读取本地诊断状态失败：' + businessError.message;
+      return;
+    }
+    try {
+      const subscriptions = await notificationExtensionSubscription.getSubscribeInfo();
+      this.notificationSubscriptionStatus = subscriptions.length > 0 ?
+        '已订阅 ' + subscriptions.length + ' 个设备（地址尾号：' +
+        subscriptions.map((subscription) => subscription.addr.slice(-5)).join('、') + '）' :
+        '尚未订阅穿戴设备';
+    } catch (error) {
+      const businessError = error as BusinessError;
+      this.notificationSubscriptionStatus = '查询订阅失败（' + businessError.code + '）：' + businessError.message;
+    }
+    try {
+      const isGranted = await notificationExtensionSubscription.isUserGranted();
+      if (!isGranted) {
+        this.notificationPermissionStatus = '本机通知访问尚未开启';
+        return;
+      }
+      const enabledBundles = await notificationExtensionSubscription.getUserGrantedEnabledBundles();
+      this.notificationPermissionStatus = '本机通知访问已开启，已选择 ' + enabledBundles.length + ' 个来源应用';
+    } catch (error) {
+      const businessError = error as BusinessError;
+      this.notificationPermissionStatus = '权限或设备暂不支持查询：' + businessError.message;
+    }
+  }
+
+  private async showNotificationProbeDetails(): Promise<void> {
+    await this.refreshNotificationProbe();
+    const sourceName = this.notificationProbe.appName.length > 0 ?
+      this.notificationProbe.appName : this.notificationProbe.bundleName;
+    const title = this.notificationProbe.title.length > 0 ? this.notificationProbe.title : '（无标题）';
+    const body = this.notificationProbe.body.length > 0 ? this.notificationProbe.body : '（无正文）';
+    const message = '来源：' + sourceName +
+      '\n时间：' + formatDateTime(this.notificationProbe.deliveryTime) +
+      '\n标题：' + title +
+      '\n正文：' + body;
+    try {
+      await this.getUIContext().getPromptAction().showDialog({
+        title: '最近收到的通知',
+        message: message,
+        buttons: [{ text: '关闭', color: '#2457C5' }]
+      });
+    } catch (error) {
+      const businessError = error as BusinessError;
+      this.notificationPermissionStatus = '打开通知详情失败（' + businessError.code + '）：' + businessError.message;
+    }
+  }
+
+  private async clearNotificationProbeState(): Promise<void> {
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      await clearNotificationProbe(context);
+      await this.refreshNotificationProbe();
+    } catch (error) {
+      const businessError = error as BusinessError;
+      this.notificationPermissionStatus = '清除诊断记录失败：' + businessError.message;
+    }
+  }
+
   private async initialize(): Promise<void> {
     try {
       const context = this.getUIContext().getHostContext() as common.Context;
       await this.repository.open(context);
+      if (this.ledgerEntriesChangedObserver === undefined) {
+        const observer = () => {
+          if (!this.ready) {
+            this.pendingLedgerEntriesRefresh = true;
+            return;
+          }
+          this.refreshEntriesForCurrentScreen();
+        };
+        this.repository.observeLedgerEntriesChanged(observer);
+        this.ledgerEntriesChangedObserver = observer;
+      }
       await this.loadCycleStartDay(context);
       await this.reloadEntries();
       this.ready = true;
+      if (this.pendingLedgerEntriesRefresh) {
+        this.pendingLedgerEntriesRefresh = false;
+        this.refreshEntriesForCurrentScreen();
+      }
       if (this.shareImportMode) {
         this.sharedImportUris = this.sharedImageUris.slice();
         this.sharedImageUris = [];
