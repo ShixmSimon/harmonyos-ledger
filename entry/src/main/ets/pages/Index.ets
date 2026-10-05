@@ -71,6 +71,7 @@ struct Index {
   private sharedImportUris: string[] = [];
   private ocrRequestId: number = 0;
   @State private entries: LedgerEntry[] = [];
+  @State private entriesViewRevision: number = 0;
   @State private ready: boolean = false;
   @State private errorMessage: string = '';
   @State private pendingDeleteId: string = '';
@@ -96,6 +97,7 @@ struct Index {
   private repository: LedgerRepository = new LedgerRepository();
   private ledgerEntriesChangedObserver: (() => void) | undefined = undefined;
   private pendingLedgerEntriesRefresh: boolean = false;
+  private entriesReloadRequestId: number = 0;
 
   aboutToAppear(): void {
     void this.initialize();
@@ -331,6 +333,7 @@ struct Index {
         });
       } else {
         LedgerHomeView({
+          entriesViewRevision: this.entriesViewRevision,
           monthEntries: this.monthEntries(),
           dayGroups: this.monthEntryGroupsByDay(),
           incomeTotalFen: this.monthTotal('income'),
@@ -998,7 +1001,12 @@ struct Index {
   }
 
   private async reloadEntries(): Promise<void> {
-    this.entries = await this.repository.listEntries();
+    const requestId = ++this.entriesReloadRequestId;
+    const entries = await this.repository.listEntries();
+    if (requestId === this.entriesReloadRequestId) {
+      this.entries = entries;
+      this.entriesViewRevision++;
+    }
   }
 
   private async loadCycleStartDay(context: common.Context): Promise<void> {
@@ -1230,7 +1238,7 @@ struct Index {
     try {
       const deletedId = this.pendingDeleteId;
       await this.repository.deleteEntry(deletedId);
-      this.entries = await this.repository.listEntries();
+      await this.reloadEntries();
       this.pendingDeleteId = '';
       this.showToast('账目已删除');
     } catch (error) {
@@ -1268,7 +1276,6 @@ struct Index {
     try {
       const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
       const entries = await this.repository.listEntries();
-      this.entries = entries;
       const exported = await CsvExporter.export(context, entries);
       this.showToast(exported ? 'CSV 已导出' : '已取消导出');
     } catch (error) {
@@ -1286,7 +1293,6 @@ struct Index {
         this.showToast('已取消 CSV 导入');
         return;
       }
-      this.entries = existingEntries;
       if (preview.rowCount === 0) {
         this.showToast('CSV 中没有账目记录');
         return;

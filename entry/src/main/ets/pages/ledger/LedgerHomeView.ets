@@ -11,6 +11,7 @@ export interface LedgerDayGroup {
 
 @Component
 export struct LedgerHomeView {
+  @Prop entriesViewRevision: number = 0;
   @Prop monthEntries: LedgerEntry[] = [];
   @Prop dayGroups: LedgerDayGroup[] = [];
   @Prop incomeTotalFen: number = 0;
@@ -231,7 +232,7 @@ export struct LedgerHomeView {
       } else {
         ForEach(this.dayGroups, (group: LedgerDayGroup) => {
           this.entryDayGroup(group);
-        }, (group: LedgerDayGroup) => group.dateKey);
+        }, (group: LedgerDayGroup) => group.dateKey + ':' + this.entriesViewRevision);
       }
     }
     .width('100%')

@@ -75,6 +75,7 @@ export class LedgerRepository {
   async addEntry(entry: LedgerEntry): Promise<void> {
     const store = this.requireStore();
     await store.insert('ledger_entries', this.toValues(entry));
+    this.emitLedgerEntriesChanged();
   }
 
   async addNotificationEntry(entry: LedgerEntry): Promise<void> {
@@ -100,12 +101,12 @@ export class LedgerRepository {
         const predicates = new relationalStore.RdbPredicates('ledger_entries');
         predicates.equalTo('id', existingId);
         await store.update({ category: entry.category }, predicates);
-        store.emit(LEDGER_ENTRIES_CHANGED_EVENT);
+        this.emitLedgerEntriesChanged();
       }
       return;
     }
     await store.insert('ledger_entries', this.toValues(entry), relationalStore.ConflictResolution.ON_CONFLICT_IGNORE);
-    store.emit(LEDGER_ENTRIES_CHANGED_EVENT);
+    this.emitLedgerEntriesChanged();
   }
 
   observeLedgerEntriesChanged(observer: () => void): void {
@@ -126,6 +127,7 @@ export class LedgerRepository {
       rows.push(this.toValues(entry));
     });
     await store.batchInsert('ledger_entries', rows);
+    this.emitLedgerEntriesChanged();
   }
 
   async updateEntry(entry: LedgerEntry): Promise<void> {
@@ -133,6 +135,7 @@ export class LedgerRepository {
     const predicates = new relationalStore.RdbPredicates('ledger_entries');
     predicates.equalTo('id', entry.id);
     await store.update(this.toValues(entry), predicates);
+    this.emitLedgerEntriesChanged();
   }
 
   async deleteEntry(id: string): Promise<void> {
@@ -140,6 +143,11 @@ export class LedgerRepository {
     const predicates = new relationalStore.RdbPredicates('ledger_entries');
     predicates.equalTo('id', id);
     await store.delete(predicates);
+    this.emitLedgerEntriesChanged();
+  }
+
+  private emitLedgerEntriesChanged(): void {
+    this.requireStore().emit(LEDGER_ENTRIES_CHANGED_EVENT);
   }
 
   private requireStore(): relationalStore.RdbStore {
