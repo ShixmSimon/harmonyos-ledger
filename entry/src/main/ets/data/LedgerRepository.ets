@@ -1,0 +1,124 @@
+import { common } from '@kit.AbilityKit';
+import { relationalStore } from '@kit.ArkData';
+import { EntryDirection, EntrySource, LedgerEntry } from '../model/LedgerModels';
+
+export class LedgerRepository {
+  private store: relationalStore.RdbStore | undefined = undefined;
+
+  async open(context: common.Context): Promise<void> {
+    if (this.store !== undefined) {
+      return;
+    }
+    const config: relationalStore.StoreConfig = {
+      name: 'harmony_ledger.db',
+      securityLevel: relationalStore.SecurityLevel.S1
+    };
+    this.store = await relationalStore.getRdbStore(context, config);
+    await this.store.executeSql(
+      'CREATE TABLE IF NOT EXISTS ledger_entries (' +
+      'id TEXT PRIMARY KEY NOT NULL,' +
+      'happened_at INTEGER NOT NULL,' +
+      'amount_fen INTEGER NOT NULL,' +
+      'direction TEXT NOT NULL,' +
+      'source TEXT NOT NULL,' +
+      'merchant TEXT NOT NULL,' +
+      'category TEXT NOT NULL,' +
+      'note TEXT NOT NULL DEFAULT \"\",' +
+      'has_time INTEGER NOT NULL DEFAULT 1)'
+    );
+    const columns = await this.store.querySql('PRAGMA table_info(ledger_entries)');
+    let hasTimeColumn = false;
+    try {
+      while (columns.goToNextRow()) {
+        if (columns.getString(columns.getColumnIndex('name')) === 'has_time') {
+          hasTimeColumn = true;
+          break;
+        }
+      }
+    } finally {
+      columns.close();
+    }
+    if (!hasTimeColumn) {
+      await this.store.executeSql('ALTER TABLE ledger_entries ADD COLUMN has_time INTEGER NOT NULL DEFAULT 1');
+    }
+  }
+
+  async listEntries(): Promise<LedgerEntry[]> {
+    const store = this.requireStore();
+    const result = await store.querySql(
+      'SELECT id, happened_at, amount_fen, direction, source, merchant, category, note, has_time ' +
+      'FROM ledger_entries ORDER BY happened_at DESC'
+    );
+    const entries: LedgerEntry[] = [];
+    try {
+      while (result.goToNextRow()) {
+        entries.push({
+          id: result.getString(result.getColumnIndex('id')),
+          happenedAt: result.getLong(result.getColumnIndex('happened_at')),
+          hasTime: result.getLong(result.getColumnIndex('has_time')) === 1,
+          amountFen: result.getLong(result.getColumnIndex('amount_fen')),
+          direction: result.getString(result.getColumnIndex('direction')) as EntryDirection,
+          source: result.getString(result.getColumnIndex('source')) as EntrySource,
+          merchant: result.getString(result.getColumnIndex('merchant')),
+          category: result.getString(result.getColumnIndex('category')),
+          note: result.getString(result.getColumnIndex('note'))
+        });
+      }
+    } finally {
+      result.close();
+    }
+    return entries;
+  }
+
+  async addEntry(entry: LedgerEntry): Promise<void> {
+    const store = this.requireStore();
+    await store.insert('ledger_entries', this.toValues(entry));
+  }
+
+  async addEntries(entries: LedgerEntry[]): Promise<void> {
+    if (entries.length === 0) {
+      return;
+    }
+    const store = this.requireStore();
+    const rows: relationalStore.ValuesBucket[] = [];
+    entries.forEach((entry: LedgerEntry) => {
+      rows.push(this.toValues(entry));
+    });
+    await store.batchInsert('ledger_entries', rows);
+  }
+
+  async updateEntry(entry: LedgerEntry): Promise<void> {
+    const store = this.requireStore();
+    const predicates = new relationalStore.RdbPredicates('ledger_entries');
+    predicates.equalTo('id', entry.id);
+    await store.update(this.toValues(entry), predicates);
+  }
+
+  async deleteEntry(id: string): Promise<void> {
+    const store = this.requireStore();
+    const predicates = new relationalStore.RdbPredicates('ledger_entries');
+    predicates.equalTo('id', id);
+    await store.delete(predicates);
+  }
+
+  private requireStore(): relationalStore.RdbStore {
+    if (this.store === undefined) {
+      throw new Error('本地账本尚未初始化');
+    }
+    return this.store;
+  }
+
+  private toValues(entry: LedgerEntry): relationalStore.ValuesBucket {
+    return {
+      id: entry.id,
+      happened_at: entry.happenedAt,
+      has_time: entry.hasTime ? 1 : 0,
+      amount_fen: entry.amountFen,
+      direction: entry.direction,
+      source: entry.source,
+      merchant: entry.merchant,
+      category: entry.category,
+      note: entry.note
+    };
+  }
+}
