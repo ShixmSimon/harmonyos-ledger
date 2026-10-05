@@ -28,6 +28,7 @@ export struct LedgerHomeView {
   onPreviousMonth: () => void = () => {};
   onNextMonth: () => void = () => {};
   onOpenStatistics: () => void = () => {};
+  onOpenNotificationHistory: () => void = () => {};
   onStartImport: () => void = () => {};
   onOpenSettings: () => void = () => {};
   onCycleStartDayChange: (day: number) => void = (_day: number) => {};
@@ -51,18 +52,16 @@ export struct LedgerHomeView {
                 .fontColor('#7B8794');
             }
             Blank();
-            Button('统计')
-              .backgroundColor('#E9F1FF')
-              .fontColor('#2457C5')
-              .onClick(() => {
-                this.onSaveScroll(this.scroller.currentOffset().yOffset);
-                this.onOpenStatistics();
-              });
             CycleStartDaySelector({
               startDay: this.cycleStartDay,
               onChange: (day: number) => this.onCycleStartDayChange(day)
             });
-
+            Button('设置')
+              .backgroundColor('#E9F1FF')
+              .fontColor('#2457C5')
+              .onClick(() => {
+                this.onOpenSettings();
+              });
           }
           .width('100%');
 
@@ -73,11 +72,14 @@ export struct LedgerHomeView {
               .backgroundColor('#FFFFFF')
               .fontColor('#2457C5')
               .onClick(() => this.onStartImport());
-            Button('设置')
+            Button('＋ 手动记账')
               .layoutWeight(1)
-              .backgroundColor('#FFFFFF')
-              .fontColor('#2457C5')
-              .onClick(() => this.onOpenSettings());
+              .backgroundColor('#2457C5')
+              .fontColor('#FFFFFF')
+              .onClick(() => {
+                this.onSaveScroll(this.scroller.currentOffset().yOffset);
+                this.onAddEntry();
+              });
           }
           .width('100%');
           this.monthSelector();
@@ -111,13 +113,13 @@ export struct LedgerHomeView {
           .layoutWeight(1)
           .backgroundColor('#E8F0FE')
           .fontColor('#2457C5');
-        Button('＋ 手动记账')
+        Button('通知')
           .layoutWeight(1)
-          .backgroundColor('#2457C5')
-          .fontColor('#FFFFFF')
+          .backgroundColor('#FFFFFF')
+          .fontColor('#2457C5')
           .onClick(() => {
             this.onSaveScroll(this.scroller.currentOffset().yOffset);
-            this.onAddEntry();
+            this.onOpenNotificationHistory();
           });
       }
       .padding({ left: 18, right: 18, top: 10, bottom: 12 })
@@ -166,7 +168,11 @@ export struct LedgerHomeView {
     .alignItems(HorizontalAlign.Start)
     .padding(18)
     .backgroundColor('#2857C5')
-    .borderRadius(18);
+    .borderRadius(18)
+    .onClick(() => {
+      this.onSaveScroll(this.scroller.currentOffset().yOffset);
+      this.onOpenStatistics();
+    });
   }
 
   @Builder

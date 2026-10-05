@@ -55,6 +55,7 @@ struct Index {
   @State private notificationProbe: NotificationProbeSnapshot = emptyNotificationProbe();
   @State private notificationHistoryOverlayOpen: boolean = false;
   @State private notificationHistoryBackRequestRevision: number = 0;
+  @State private notificationHistoryReturnScreen: 'ledger' | 'notificationSettings' = 'notificationSettings';
   @State private notificationPermissionStatus: string = '尚未检查';
   @State private notificationSubscriptionStatus: string = '尚未检查';
   @State private pairedBluetoothDevices: PairedNotificationDevice[] = [];
@@ -166,7 +167,7 @@ struct Index {
       if (this.notificationHistoryOverlayOpen) {
         this.notificationHistoryBackRequestRevision++;
       } else {
-        this.screen = 'notificationSettings';
+        this.screen = this.notificationHistoryReturnScreen;
       }
       return true;
     }
@@ -268,6 +269,7 @@ struct Index {
             this.screen = 'settings';
           },
           onOpenHistory: () => {
+            this.notificationHistoryReturnScreen = 'notificationSettings';
             this.screen = 'notificationHistory';
           },
           onOpenPermission: () => {
@@ -298,7 +300,7 @@ struct Index {
           backRequestRevision: $notificationHistoryBackRequestRevision,
           onBack: () => {
             this.notificationHistoryOverlayOpen = false;
-            this.screen = 'notificationSettings';
+            this.screen = this.notificationHistoryReturnScreen;
           },
           onOpenSettings: () => {
             this.notificationHistoryOverlayOpen = false;
@@ -348,6 +350,10 @@ struct Index {
           onStartImport: () => this.openOcrImport(),
           onOpenSettings: () => {
             this.screen = 'settings';
+          },
+          onOpenNotificationHistory: () => {
+            this.notificationHistoryReturnScreen = 'ledger';
+            this.screen = 'notificationHistory';
           },
           onAddEntry: () => this.openEditor(),
           onEditEntry: (entry: LedgerEntry) => this.openEditor(entry),
