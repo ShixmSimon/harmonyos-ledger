@@ -26,3 +26,7 @@ HAP 自动使用 `entry/build-profile.json5` 中的 `artifactName`，当前名�
 ## 版本号
 
 `hvigorfile.ts` 使用 `git rev-list --count HEAD` 获取仓库提交数，并在其上加 `1,000,000`。该值用于 `versionCode`，`versionName` 使用 `1.0.<该值>`。构建需要可读取的 Git 历史；浅克隆或非 Git 源码目录不能生成版本号。
+
+## GitHub Actions
+
+`.github/workflows/build-unsigned-hap.yml` 仅在推送匹配 `v*` 的 Git tag 时触发。普通分支推送和手动触发不会运行该工作流。tag 构建成功后，工作流会创建 GitHub Release，并附上未签名 HAP 与 SHA-256 校验文件。
