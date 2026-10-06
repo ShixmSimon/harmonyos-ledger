@@ -173,6 +173,10 @@ struct Index {
       this.pendingDiscardConfirmation = false;
       return true;
     }
+    if (this.screen === 'import') {
+      this.requestLeaveImport();
+      return true;
+    }
     if (this.shareImportMode) {
       void this.closeShareImport();
       return true;
@@ -191,10 +195,6 @@ struct Index {
         return true;
       }
       return false;
-    }
-    if (this.screen === 'import') {
-      this.requestLeaveImport();
-      return true;
     }
     if (this.statisticsEditorOpen || this.screen === 'editor') {
       this.requestLeaveEditor();
