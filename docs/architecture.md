@@ -6,34 +6,47 @@
 | --- | --- |
 | pages/ | 页面状态、查询状态、编辑和导入流程 |
 | components/ | 受控展示组件，以属性接收数据、以回调上报交互 |
-| model/ | 账目、草稿和通知归档类型，以及金额和日期格式化 |
+| model/ | 账目、草稿、通知归档类型和主页签导航状态，以及金额和日期格式化 |
 | data/ | ArkData relationalStore 读写和数据库初始化 |
-| services/ | OCR、来源检测、账单解析、通知解析和统计计算 |
+| services/ | OCR、账单解析、通知解析与规则引擎、规则偏好存储和统计计算 |
 | state/ | 分享导入等跨扩展入口的短期应用状态 |
 | entryability/ | EntryAbility 启动、前后台切换与宿主能力 |
 | extensionability/ | 图片分享导入、通知订阅等扩展入口 |
 
-Index.ets 负责页面切换和跨页面操作协调。数据计算与数据库访问不应放进展示组件。
+`Index.ets` 负责主页签和跨页面流程协调；`MainTabNavigation.ts` 保存纯导航状态。数据计算与数据库访问不应放进展示组件。
 
 ~~~mermaid
 flowchart LR
   User[用户] --> Index[Index 页面协调]
-  Index --> Picker[系统图片选择器]
+  Index --> Nav{账本 / 通知}
+  Nav --> LedgerTab[账本页签]
+  Nav --> NotifyTab[通知页签]
+  LedgerTab --> Picker[系统图片选择器或分享图片]
   Picker --> OCR[Core Vision 本地 OCR]
-  OCR --> Parser[来源检测与账单解析]
-  Parser --> Review[逐条复核]
+  OCR --> OcrCoordinator[来源检测与账单解析]
+  OcrRules[OCR 规则设置] --> OcrPreferences[(Preferences: ocr_recognition_rules)]
+  OcrPreferences --> OcrCoordinator
+  OcrCoordinator --> Review[逐条复核]
   Review --> Ledger[LedgerRepository]
   Ledger --> LedgerDB[(harmony_ledger.db)]
-  Index --> CsvPicker[系统文档选择器]
-  CsvPicker --> CsvImport[CsvImporter]
+  LedgerTab --> ImportPicker[系统文档选择器]
+  ImportPicker --> CsvImport[CsvImporter]
   CsvImport --> CsvPreview[导入预览与确认]
   CsvPreview --> Ledger
-  Notify[系统通知订阅] --> Extension[NotificationProbeExtension]
+  LedgerTab --> ExportPicker[系统保存选择器]
+  ExportPicker --> CsvExport[CsvExporter]
+  CsvExport --> CsvFile[CSV 文件]
+  NotifyTab --> History[通知历史页]
+  NotifyTab --> NotifySettings[通知设置与规则]
+  NotifySettings --> NotifyRules[NotificationRuleStore]
+  NotifyRules --> NotifyPreferences[(Preferences: notification_rules)]
+  SystemNotify[系统通知订阅] --> Extension[NotificationProbeExtension]
   Extension --> Archive[NotificationArchiveRepository]
   Archive --> ArchiveDB[(notification_archive.db)]
-  Extension --> Ledger
-  Index --> Stats[LedgerStatistics]
-  Index --> CSV[CsvExporter]
+  NotifyPreferences --> Extension
+  Extension --> Parser[BankNotificationParser / NotificationRuleEngine]
+  Parser --> Ledger
+  LedgerTab --> Stats[LedgerStatistics]
 ~~~
 
 ## 本地数据库
@@ -48,16 +61,24 @@ LedgerRepository 在新增、批量导入、编辑、删除和通知自动入账
 
 ### 通知归档
 
-通知标题、正文和系统来源字段独立存放于 notification_archive.db 的 notification_events 表。归档与自动记账分别使用自己的异步队列和错误处理：归档失败不会阻止银行通知记账，自动记账失败也不会阻止保存通知历史。
+通知标题、正文和系统来源字段独立存放于 notification_archive.db 的 notification_events 表。归档与自动记账分别使用自己的异步队列和错误处理：归档失败不会阻止通知自动记账，自动记账失败也不会阻止保存通知历史。
 
 该数据库会保存设备实际投递给本应用的通知内容；使用者应将它视作敏感个人数据。当前版本没有云端副本或账号同步。
 
+### 可编辑识别规则
+
+OCR 规则与通知规则不存入账本或通知归档数据库，而是分别以版本化 JSON 存在 ArkData Preferences：`ocr_recognition_rules` 和 `notification_rules`。OCR 导入流程读取当前规则并将其交给来源检测和账单解析器；通知扩展在处理新通知时读取通知规则，再调用通知解析引擎。规则编辑不会改写已有账目或通知归档。
+
 ## 页面与服务流
 
-- Index.ets 协调首页、统计、手动编辑、OCR 复核、CSV 导入、设置和通知历史。
+- 底部“账本”和“通知”为同级页签。切换页签时回到账本首页或通知历史页；`MainTabNavigation.ts` 表示当前页签，以及通知页内的历史、设置和规则路由。
+- 账本设置包含记账周期、OCR 识别规则和数据备份；数据备份位于设置页底部，并提供 CSV 导入/导出。通知设置管理通知授权、穿戴设备转发和诊断，通知识别规则在通知设置内单独编辑。
+- `Index.ets` 协调统计、手动编辑、OCR 复核和页签路由。通知历史作为“通知”页签的主页面展示。
 - LedgerStatistics.ets 对已加载的账目按本地日期和所选记账周期做纯计算；统计视图负责图表与排行展示。
-- CsvExporter.ets 通过系统文档保存选择器写出 UTF-8 CSV；CsvImporter.ets 通过系统文档选择器读取用户选择的 CSV 并生成导入预览。文件只在导入流程内读取，不长期保留。
+- OcrRuleStore.ets 和 NotificationRuleStore.ets 分别读取及校验偏好设置中的规则；OCR 规则供截图导入流程使用，通知规则由通知扩展用于后续自动记账。
+- CsvExporter.ets 通过系统文档保存选择器写出 UTF-8 CSV，默认基础文件名为“通知记账”并提供 `csv` 后缀选项；CsvImporter.ets 读取用户选择的 CSV 并生成导入预览。文件只在导入流程内读取，不长期保留。
 - ShareImportExtension 接收用户从其他应用明确分享过来的图片 URI；图片仍由 OCR 导入流程处理。
+- NotificationProbeExtension 将通知归档和自动记账排入独立队列。`BankNotificationParser.ets` 负责把系统通知转换为通用输入并调用 `NotificationRuleEngine.ets`；具体来源和正文正则来自可编辑规则，解析器不再维护银行专用正文正则。
 
 ## CSV 导入与导出
 
