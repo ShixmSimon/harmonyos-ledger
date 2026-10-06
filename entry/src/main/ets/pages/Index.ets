@@ -29,6 +29,13 @@ import { CsvImporter } from '../services/CsvImporter';
 import { OcrDraftConfirmationPlan, OcrImportCoordinator } from '../services/OcrImportCoordinator';
 import { OcrImportView } from './import/OcrImportView';
 import { DraftValidationError, OcrImportResult, UnclassifiedOcrPage } from '../model/OcrModels';
+import {
+  backNotificationRoute,
+  initialMainTabNavigationState,
+  MainTabNavigationState,
+  navigateNotificationTo,
+  selectMainTab
+} from '../model/MainTabNavigation';
 import { indexStorage } from '../state/IndexStorage';
 import { SettingsView } from '../components/settings/SettingsView';
 import { NotificationSettingsView, PairedNotificationDevice } from '../components/settings/NotificationSettingsView';
@@ -53,7 +60,10 @@ struct Index {
   private ledgerRefreshRevision: number = 0;
   @State
   @Watch('onScreenChanged')
-  private screen: 'ledger' | 'editor' | 'statistics' | 'import' | 'settings' | 'notificationSettings' | 'notificationRules' | 'ocrRules' | 'notificationHistory' = 'ledger';
+  private screen: 'ledger' | 'editor' | 'statistics' | 'import' | 'settings' | 'ocrRules' = 'ledger';
+  @State
+  @Watch('onMainTabNavigationChanged')
+  private mainTabNavigation: MainTabNavigationState = initialMainTabNavigationState();
   @State private drafts: DraftEntry[] = [];
   @State private unclassifiedPages: UnclassifiedOcrPage[] = [];
   @State private ocrRawText: string = '';
@@ -64,7 +74,6 @@ struct Index {
   @State private notificationProbe: NotificationProbeSnapshot = emptyNotificationProbe();
   @State private notificationHistoryOverlayOpen: boolean = false;
   @State private notificationHistoryBackRequestRevision: number = 0;
-  @State private notificationHistoryReturnScreen: 'ledger' | 'notificationSettings' = 'notificationSettings';
   @State private notificationPermissionStatus: string = '尚未检查';
   @State private notificationSubscriptionStatus: string = '尚未检查';
   @State private pairedBluetoothDevices: PairedNotificationDevice[] = [];
@@ -116,23 +125,35 @@ struct Index {
   }
 
   private onLedgerRefreshRevisionChanged(): void {
-    if (this.screen === 'settings' || this.screen === 'notificationSettings' || this.screen === 'notificationRules') {
+    if (this.isNotificationSettingsVisible()) {
       void this.refreshNotificationProbe();
     }
     this.refreshEntriesForCurrentScreen();
   }
 
   private onScreenChanged(): void {
-    if (this.screen === 'settings' || this.screen === 'notificationSettings' || this.screen === 'notificationRules') {
+    if (this.isNotificationSettingsVisible()) {
       void this.refreshNotificationProbe();
     }
     this.refreshEntriesForCurrentScreen();
   }
 
+  private onMainTabNavigationChanged(): void {
+    if (this.isNotificationSettingsVisible()) {
+      void this.refreshNotificationProbe();
+    }
+    this.refreshEntriesForCurrentScreen();
+  }
+
+  private isNotificationSettingsVisible(): boolean {
+    return this.mainTabNavigation.activeTab === 'notifications' &&
+      (this.mainTabNavigation.notificationRoute === 'settings' ||
+        this.mainTabNavigation.notificationRoute === 'rules');
+  }
+
   private refreshEntriesForCurrentScreen(): void {
-    if (!this.ready || this.shareImportMode || this.screen === 'settings' ||
-      this.screen === 'notificationSettings' || this.screen === 'notificationRules' || this.screen === 'ocrRules' ||
-      this.screen === 'notificationHistory') {
+    if (!this.ready || this.shareImportMode || this.mainTabNavigation.activeTab !== 'ledger' ||
+      this.screen === 'settings' || this.screen === 'ocrRules') {
       return;
     }
     void this.reloadEntriesSafely();
@@ -164,6 +185,21 @@ struct Index {
       void this.closeShareImport();
       return true;
     }
+    if (this.mainTabNavigation.activeTab === 'notifications') {
+      if (this.mainTabNavigation.notificationRoute === 'history') {
+        if (this.notificationHistoryOverlayOpen) {
+          this.notificationHistoryBackRequestRevision++;
+          return true;
+        }
+        return false;
+      }
+      const previousRoute = backNotificationRoute(this.mainTabNavigation);
+      if (previousRoute !== undefined) {
+        this.mainTabNavigation = previousRoute;
+        return true;
+      }
+      return false;
+    }
     if (this.statisticsEditorOpen || this.screen === 'editor') {
       this.requestLeaveEditor();
       return true;
@@ -176,23 +212,7 @@ struct Index {
       }
       return true;
     }
-    if (this.screen === 'notificationHistory') {
-      if (this.notificationHistoryOverlayOpen) {
-        this.notificationHistoryBackRequestRevision++;
-      } else {
-        this.screen = this.notificationHistoryReturnScreen;
-      }
-      return true;
-    }
-    if (this.screen === 'notificationRules') {
-      this.screen = 'notificationSettings';
-      return true;
-    }
     if (this.screen === 'ocrRules') {
-      this.screen = 'settings';
-      return true;
-    }
-    if (this.screen === 'notificationSettings') {
       this.screen = 'settings';
       return true;
     }
@@ -213,211 +233,254 @@ struct Index {
         this.shareImportOutcomeView(false);
       } else if (this.shareImportMode && this.sharedImportError.length > 0) {
         this.shareImportErrorView();
-      } else if (this.screen === 'import') {
-        OcrImportView({
-          drafts: this.drafts,
-          unclassifiedPages: this.unclassifiedPages,
-          rawText: this.ocrRawText,
-          loading: this.ocrLoading,
-          errorMessage: this.ocrErrorMessage,
-          reviewMessage: this.reviewMessage,
-          validationErrors: this.draftValidationErrors,
-          selectedDraftCount: OcrImportCoordinator.selectedCount(this.drafts),
-          shareImportMode: this.shareImportMode,
-          sourceLabel: (source: EntrySource) => this.sourceLabel(source),
-          duplicateMessage: (draft: DraftEntry) => OcrImportCoordinator.duplicateMessage(draft, this.entries),
-          onBack: () => this.requestLeaveImport(),
-          onSelectImages: () => {
-            void this.startImport();
-          },
-          onSave: () => {
-            void this.confirmDrafts();
-          },
-          onRawTextChange: (value: string) => {
-            this.ocrRawText = value;
-          },
-          onToggleDraft: (id: string) => this.toggleDraft(id),
-          onDirectionChange: (id: string, direction: EntryDirection) => this.setDraftDirection(id, direction),
-          onTextChange: (id: string, field: string, value: string) => this.setDraftText(id, field, value),
-          onResolvePage: (pageNumber: number, source?: ImportSource) => this.resolveUnclassifiedPage(pageNumber, source)
-        });
-      } else if (this.screen === 'editor') {
-        LedgerEditorView({
-          editingId: this.editingId,
-          merchant: this.formMerchant,
-          dateText: this.formDateText,
-          amountText: this.formAmountText,
-          entryDirection: this.formDirection,
-          category: this.formCategory,
-          note: this.formNote,
-          dateError: this.editorDateError,
-          amountError: this.editorAmountError,
-          onBack: () => this.requestLeaveEditor(),
-          onSave: () => {
-            void this.saveEditor();
-          },
-          onChooseDate: () => this.chooseEditorDate(),
-          onFieldChange: (field: string, value: string) => this.setFormValue(field, value),
-          onDirectionChange: (direction: EntryDirection) => {
-            this.editorDirty = this.editorDirty || this.formDirection !== direction;
-            this.formDirection = direction;
-          }
-        });
-      } else if (this.screen === 'settings') {
-        SettingsView({
-          cycleStartDay: this.cycleStartDay,
-          onBack: () => {
-            this.screen = 'ledger';
-          },
-          onCycleStartDayChange: (day: number) => {
-            void this.changeCycleStartDay(day);
-          },
-          onOpenNotificationSettings: () => {
-            this.screen = 'notificationSettings';
-          },
-          onOpenOcrRules: () => {
-            this.screen = 'ocrRules';
-          },
-          onExportCsv: () => {
-            void this.exportCsv();
-          },
-          onImportCsv: () => {
-            void this.importCsv();
-          }
-        });
-      } else if (this.screen === 'notificationSettings') {
-        NotificationSettingsView({
-          permissionStatus: this.notificationPermissionStatus,
-          subscriptionStatus: this.notificationSubscriptionStatus,
-          probe: this.notificationProbe,
-          pairedDevices: this.pairedBluetoothDevices,
-          advancedHelp: this.showNotificationAdvancedHelp,
-          onBack: () => {
-            this.screen = 'settings';
-          },
-          onOpenHistory: () => {
-            this.notificationHistoryReturnScreen = 'notificationSettings';
-            this.screen = 'notificationHistory';
-          },
-          onOpenRules: () => {
-            this.screen = 'notificationRules';
-          },
-          onOpenPermission: () => {
-            void this.openNotificationSubscriptionSettings();
-          },
-          onRefresh: () => {
-            void this.refreshNotificationProbe();
-          },
-          onFindDevices: () => {
-            void this.loadPairedBluetoothDevices();
-          },
-          onSubscribeDevice: (device: PairedNotificationDevice) => {
-            void this.subscribeToPairedDevice(device);
-          },
-          onShowRecentNotification: () => {
-            void this.showNotificationProbeDetails();
-          },
-          onClearDiagnostics: () => {
-            void this.clearNotificationProbeState();
-          },
-          onToggleAdvancedHelp: () => {
-            this.showNotificationAdvancedHelp = !this.showNotificationAdvancedHelp;
-          }
-        });
-      } else if (this.screen === 'notificationRules') {
-        NotificationRuleSettingsView({
-          onBack: () => {
-            this.screen = 'notificationSettings';
-          }
-        });
-      } else if (this.screen === 'ocrRules') {
-        OcrRuleSettingsView({
-          onBack: () => {
-            this.screen = 'settings';
-          }
-        });
-      } else if (this.screen === 'notificationHistory') {
-        NotificationHistoryView({
-          overlayOpen: $notificationHistoryOverlayOpen,
-          backRequestRevision: $notificationHistoryBackRequestRevision,
-          onBack: () => {
-            this.notificationHistoryOverlayOpen = false;
-            this.screen = this.notificationHistoryReturnScreen;
-          },
-          onOpenSettings: () => {
-            this.notificationHistoryOverlayOpen = false;
-            this.screen = 'notificationSettings';
-          }
-        });
-      } else if (this.screen === 'statistics') {
-        StatisticsView({
-          entries: this.entries,
-          cycleStartDay: this.cycleStartDay,
-          selectedRankValue: $selectedRankValue,
-          onBack: () => {
-            this.selectedRankValue = '';
-            this.screen = 'ledger';
-          },
-          onEditEntry: (entry: LedgerEntry) => this.openEditor(entry, true),
-          onDeleteRequest: (entry: LedgerEntry) => {
-            this.pendingDeleteId = entry.id;
-          }
-        });
       } else {
-        LedgerHomeView({
-          entriesViewRevision: this.entriesViewRevision,
-          monthEntries: this.monthEntries(),
-          dayGroups: this.monthEntryGroupsByDay(),
-          incomeTotalFen: this.monthTotal('income'),
-          expenseTotalFen: this.monthTotal('expense'),
-          monthLabel: this.monthLabel(),
-          cycleStartDay: this.cycleStartDay,
-          scrollOffset: this.ledgerScrollOffset,
-          restoreScrollOnAppear: this.restoreLedgerScrollOnAppear,
-          onSaveScroll: (offset: number) => {
-            this.ledgerScrollOffset = Math.max(0, offset);
-            this.restoreLedgerScrollOnAppear = true;
-          },
-          onRestoreScrollComplete: () => {
-            this.restoreLedgerScrollOnAppear = false;
-          },
-          onPreviousMonth: () => this.moveMonth(-1),
-          onNextMonth: () => this.moveMonth(1),
-          onOpenStatistics: () => {
-            this.selectedRankValue = '';
-            this.screen = 'statistics';
-          },
-          onCycleStartDayChange: (day: number) => {
-            void this.changeCycleStartDay(day);
-          },
-          onStartImport: () => this.openOcrImport(),
-          onOpenSettings: () => {
-            this.screen = 'settings';
-          },
-          onOpenNotificationHistory: () => {
-            this.notificationHistoryReturnScreen = 'ledger';
-            this.screen = 'notificationHistory';
-          },
-          onAddEntry: () => this.openEditor(),
-          onEditEntry: (entry: LedgerEntry) => this.openEditor(entry),
-          onDeleteRequest: (entry: LedgerEntry) => {
-            this.pendingDeleteId = entry.id;
-          },
-          sourceLabel: (source: EntrySource) => this.sourceLabel(source)
+        Tabs({
+          barPosition: BarPosition.End,
+          index: this.mainTabNavigation.activeTab === 'ledger' ? 0 : 1
+        }) {
+          TabContent() {
+            this.ledgerTabContent();
+          }
+          .tabBar('账本');
+
+          TabContent() {
+            this.notificationTabContent();
+          }
+          .tabBar('通知');
+        }
+        .width('100%')
+        .height('100%')
+        .barMode(BarMode.Fixed)
+        .scrollable(false)
+        .barHeight(this.shareImportMode || this.screen === 'editor' || this.screen === 'import' ? 0 : 60)
+        .barBackgroundColor('#FFFFFF')
+        .onContentWillChange((currentIndex: number, comingIndex: number) => {
+          return currentIndex === comingIndex ||
+            (!this.shareImportMode && this.screen !== 'editor' && this.screen !== 'import');
+        })
+        .onChange((index: number) => {
+          const selectedTab = index === 0 ? 'ledger' : 'notifications';
+          if (this.mainTabNavigation.activeTab !== selectedTab) {
+            this.screen = 'ledger';
+            this.mainTabNavigation = selectMainTab(this.mainTabNavigation, selectedTab);
+          }
         });
-      }
-      if (this.statisticsEditorOpen) {
-        this.statisticsEditorOverlay();
-      }
-      if (this.pendingDeleteId.length > 0) {
-        this.deleteConfirmationView();
-      } else if (this.pendingDiscardConfirmation) {
-        this.discardConfirmationView();
+
+        if (this.screen === 'import') {
+          this.ocrImportScreen();
+        } else if (this.screen === 'editor') {
+          this.ledgerEditorScreen();
+        }
+
+        if (this.statisticsEditorOpen) {
+          this.statisticsEditorOverlay();
+        }
+        if (this.pendingDeleteId.length > 0) {
+          this.deleteConfirmationView();
+        } else if (this.pendingDiscardConfirmation) {
+          this.discardConfirmationView();
+        }
       }
     }
     .width('100%')
     .height('100%')
     .backgroundColor('#F6F7F9');
+  }
+
+  @Builder
+  private ledgerTabContent() {
+    if (this.screen === 'settings') {
+      SettingsView({
+        cycleStartDay: this.cycleStartDay,
+        onBack: () => {
+          this.screen = 'ledger';
+        },
+        onCycleStartDayChange: (day: number) => {
+          void this.changeCycleStartDay(day);
+        },
+        onOpenOcrRules: () => {
+          this.screen = 'ocrRules';
+        },
+        onExportCsv: () => {
+          void this.exportCsv();
+        },
+        onImportCsv: () => {
+          void this.importCsv();
+        }
+      });
+    } else if (this.screen === 'ocrRules') {
+      OcrRuleSettingsView({
+        onBack: () => {
+          this.screen = 'settings';
+        }
+      });
+    } else if (this.screen === 'statistics') {
+      StatisticsView({
+        entries: this.entries,
+        cycleStartDay: this.cycleStartDay,
+        selectedRankValue: $selectedRankValue,
+        onBack: () => {
+          this.selectedRankValue = '';
+          this.screen = 'ledger';
+        },
+        onEditEntry: (entry: LedgerEntry) => this.openEditor(entry, true),
+        onDeleteRequest: (entry: LedgerEntry) => {
+          this.pendingDeleteId = entry.id;
+        }
+      });
+    } else {
+      LedgerHomeView({
+        entriesViewRevision: this.entriesViewRevision,
+        monthEntries: this.monthEntries(),
+        dayGroups: this.monthEntryGroupsByDay(),
+        incomeTotalFen: this.monthTotal('income'),
+        expenseTotalFen: this.monthTotal('expense'),
+        monthLabel: this.monthLabel(),
+        cycleStartDay: this.cycleStartDay,
+        scrollOffset: this.ledgerScrollOffset,
+        restoreScrollOnAppear: this.restoreLedgerScrollOnAppear,
+        onSaveScroll: (offset: number) => {
+          this.ledgerScrollOffset = Math.max(0, offset);
+          this.restoreLedgerScrollOnAppear = true;
+        },
+        onRestoreScrollComplete: () => {
+          this.restoreLedgerScrollOnAppear = false;
+        },
+        onPreviousMonth: () => this.moveMonth(-1),
+        onNextMonth: () => this.moveMonth(1),
+        onOpenStatistics: () => {
+          this.selectedRankValue = '';
+          this.screen = 'statistics';
+        },
+        onCycleStartDayChange: (day: number) => {
+          void this.changeCycleStartDay(day);
+        },
+        onStartImport: () => this.openOcrImport(),
+        onOpenSettings: () => {
+          this.screen = 'settings';
+        },
+        onAddEntry: () => this.openEditor(),
+        onEditEntry: (entry: LedgerEntry) => this.openEditor(entry),
+        onDeleteRequest: (entry: LedgerEntry) => {
+          this.pendingDeleteId = entry.id;
+        },
+        sourceLabel: (source: EntrySource) => this.sourceLabel(source)
+      });
+    }
+  }
+
+  @Builder
+  private notificationTabContent() {
+    if (this.mainTabNavigation.notificationRoute === 'settings') {
+      NotificationSettingsView({
+        permissionStatus: this.notificationPermissionStatus,
+        subscriptionStatus: this.notificationSubscriptionStatus,
+        probe: this.notificationProbe,
+        pairedDevices: this.pairedBluetoothDevices,
+        advancedHelp: this.showNotificationAdvancedHelp,
+        onBack: () => {
+          this.mainTabNavigation = navigateNotificationTo('history');
+        },
+        onOpenHistory: () => {
+          this.mainTabNavigation = navigateNotificationTo('history');
+        },
+        onOpenRules: () => {
+          this.mainTabNavigation = navigateNotificationTo('rules');
+        },
+        onOpenPermission: () => {
+          void this.openNotificationSubscriptionSettings();
+        },
+        onRefresh: () => {
+          void this.refreshNotificationProbe();
+        },
+        onFindDevices: () => {
+          void this.loadPairedBluetoothDevices();
+        },
+        onSubscribeDevice: (device: PairedNotificationDevice) => {
+          void this.subscribeToPairedDevice(device);
+        },
+        onShowRecentNotification: () => {
+          void this.showNotificationProbeDetails();
+        },
+        onClearDiagnostics: () => {
+          void this.clearNotificationProbeState();
+        },
+        onToggleAdvancedHelp: () => {
+          this.showNotificationAdvancedHelp = !this.showNotificationAdvancedHelp;
+        }
+      });
+    } else if (this.mainTabNavigation.notificationRoute === 'rules') {
+      NotificationRuleSettingsView({
+        onBack: () => {
+          this.mainTabNavigation = navigateNotificationTo('settings');
+        }
+      });
+    } else {
+      NotificationHistoryView({
+        overlayOpen: $notificationHistoryOverlayOpen,
+        backRequestRevision: $notificationHistoryBackRequestRevision,
+        onOpenSettings: () => {
+          this.notificationHistoryOverlayOpen = false;
+          this.mainTabNavigation = navigateNotificationTo('settings');
+        }
+      });
+    }
+  }
+
+  @Builder
+  private ocrImportScreen() {
+    OcrImportView({
+      drafts: this.drafts,
+      unclassifiedPages: this.unclassifiedPages,
+      rawText: this.ocrRawText,
+      loading: this.ocrLoading,
+      errorMessage: this.ocrErrorMessage,
+      reviewMessage: this.reviewMessage,
+      validationErrors: this.draftValidationErrors,
+      selectedDraftCount: OcrImportCoordinator.selectedCount(this.drafts),
+      shareImportMode: this.shareImportMode,
+      sourceLabel: (source: EntrySource) => this.sourceLabel(source),
+      duplicateMessage: (draft: DraftEntry) => OcrImportCoordinator.duplicateMessage(draft, this.entries),
+      onBack: () => this.requestLeaveImport(),
+      onSelectImages: () => {
+        void this.startImport();
+      },
+      onSave: () => {
+        void this.confirmDrafts();
+      },
+      onRawTextChange: (value: string) => {
+        this.ocrRawText = value;
+      },
+      onToggleDraft: (id: string) => this.toggleDraft(id),
+      onDirectionChange: (id: string, direction: EntryDirection) => this.setDraftDirection(id, direction),
+      onTextChange: (id: string, field: string, value: string) => this.setDraftText(id, field, value),
+      onResolvePage: (pageNumber: number, source?: ImportSource) => this.resolveUnclassifiedPage(pageNumber, source)
+    });
+  }
+
+  @Builder
+  private ledgerEditorScreen() {
+    LedgerEditorView({
+      editingId: this.editingId,
+      merchant: this.formMerchant,
+      dateText: this.formDateText,
+      amountText: this.formAmountText,
+      entryDirection: this.formDirection,
+      category: this.formCategory,
+      note: this.formNote,
+      dateError: this.editorDateError,
+      amountError: this.editorAmountError,
+      onBack: () => this.requestLeaveEditor(),
+      onSave: () => {
+        void this.saveEditor();
+      },
+      onChooseDate: () => this.chooseEditorDate(),
+      onFieldChange: (field: string, value: string) => this.setFormValue(field, value),
+      onDirectionChange: (direction: EntryDirection) => {
+        this.editorDirty = this.editorDirty || this.formDirection !== direction;
+        this.formDirection = direction;
+      }
+    });
   }
 
   @Builder

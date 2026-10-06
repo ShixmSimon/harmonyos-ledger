@@ -101,7 +101,8 @@ export struct NotificationRuleSettingsView {
       }
       .width('100%')
       .padding(18)
-      .alignItems(HorizontalAlign.Start);
+      .alignItems(HorizontalAlign.Start)
+      .justifyContent(FlexAlign.Start);
     }
     .width('100%')
     .height('100%');

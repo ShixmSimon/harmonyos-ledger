@@ -15,7 +15,6 @@ import { NotificationFilterBar, NotificationHistoryRange } from '../../component
 
 @Component
 export struct NotificationHistoryView {
-  onBack: () => void = () => {};
   onOpenSettings: () => void = () => {};
   @Link overlayOpen: boolean;
   @Link
@@ -55,17 +54,15 @@ export struct NotificationHistoryView {
     Stack() {
       Column({ space: 12 }) {
         Row() {
-          Button('返回')
-            .backgroundColor('#FFFFFF')
-            .fontColor('#344563')
-            .onClick(() => this.onBack());
-          Blank();
           Text('通知历史')
             .fontSize(19)
             .fontWeight(FontWeight.Bold)
             .fontColor('#172B4D');
           Blank();
-          Blank().width(48);
+          Button('设置')
+            .backgroundColor('#E9F1FF')
+            .fontColor('#2457C5')
+            .onClick(() => this.onOpenSettings());
         }
         .width('100%');
 
