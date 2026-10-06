@@ -2,6 +2,10 @@ name: Build unsigned HarmonyOS HAP
 
 on:
   push:
+    branches:
+      - '**'
+    tags:
+      - 'v*'
   workflow_dispatch:
 
 permissions:
@@ -105,3 +109,41 @@ jobs:
           path: ${{ steps.build-hap.outputs.hap_path }}
           if-no-files-found: error
           retention-days: 7
+
+  release:
+    name: Publish HAP release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download unsigned HAP artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: harmonyledger-unsigned-${{ github.run_number }}
+          path: release
+
+      - name: Generate SHA-256 checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          hap_files=(release/*.hap)
+          if [[ ${#hap_files[@]} -ne 1 ]]; then
+            printf 'Expected one HAP file, found %s\n' "${#hap_files[@]}"
+            printf '%s\n' "${hap_files[@]}"
+            exit 1
+          fi
+          hap_name="${hap_files[0]##*/}"
+          (cd release && sha256sum "$hap_name" > "$hap_name.sha256")
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            release/*.hap
+            release/*.hap.sha256
