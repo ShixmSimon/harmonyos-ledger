@@ -6,7 +6,6 @@ export struct SettingsView {
 
   onBack: () => void = () => {};
   onCycleStartDayChange: (day: number) => void = (_day: number) => {};
-  onOpenNotificationSettings: () => void = () => {};
   onExportCsv: () => void = () => {};
   onImportCsv: () => void = () => {};
 
@@ -91,29 +90,10 @@ export struct SettingsView {
           .padding(16)
           .backgroundColor('#FFFFFF')
           .borderRadius(14);
-
-          Column({ space: 8 }) {
-            Text('通知与设备')
-              .fontSize(17)
-              .fontWeight(FontWeight.Bold)
-              .fontColor('#172B4D');
-            Text('授权通知读取后，可从支持银行的通知中自动记录收支。')
-              .fontSize(13)
-              .fontColor('#52606D');
-            Button('打开通知与设备设置')
-              .width('100%')
-              .backgroundColor('#E9F1FF')
-              .fontColor('#2457C5')
-              .onClick(() => this.onOpenNotificationSettings());
-          }
-          .width('100%')
-          .alignItems(HorizontalAlign.Start)
-          .padding(16)
-          .backgroundColor('#FFFFFF')
-          .borderRadius(14);
         }
         .width('100%')
         .alignItems(HorizontalAlign.Start)
+        .justifyContent(FlexAlign.Start)
         .padding({ left: 18, right: 18, bottom: 24 });
       }
       .layoutWeight(1)
@@ -121,6 +101,7 @@ export struct SettingsView {
     }
     .width('100%')
     .height('100%')
+    .justifyContent(FlexAlign.Start)
     .backgroundColor('#F6F7F9');
   }
 }

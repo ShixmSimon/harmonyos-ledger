@@ -13,7 +13,6 @@ export struct LedgerEditorView {
   @Prop amountError: string = '';
 
   private scroller: Scroller = new Scroller();
-  @State private viewportHeight: number = 0;
 
   onBack: () => void = () => {};
   onSave: () => void = () => {};
@@ -74,23 +73,18 @@ export struct LedgerEditorView {
             .fontColor('#7B8794');
         }
         .width('100%')
-        .constraintSize({ minHeight: this.viewportHeight })
+        .constraintSize({ minHeight: '100%' })
         .justifyContent(FlexAlign.Start)
         .padding({ left: 18, right: 18, top: 4, bottom: 24 });
       }
       .layoutWeight(1)
-      .onAreaChange((oldArea, newArea) => {
-        if (typeof newArea.height === 'number' && newArea.height > 0 &&
-          this.viewportHeight !== newArea.height) {
-          this.viewportHeight = newArea.height;
-        }
-      })
       .onAppear(() => {
         this.scroller.scrollTo({ xOffset: 0, yOffset: 0, animation: false });
       });
     }
     .width('100%')
-    .height('100%');
+    .height('100%')
+    .backgroundColor('#F6F7F9');
   }
 
   @Builder

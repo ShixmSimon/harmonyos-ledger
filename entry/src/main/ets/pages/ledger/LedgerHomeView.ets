@@ -29,7 +29,6 @@ export struct LedgerHomeView {
   onPreviousMonth: () => void = () => {};
   onNextMonth: () => void = () => {};
   onOpenStatistics: () => void = () => {};
-  onOpenNotificationHistory: () => void = () => {};
   onStartImport: () => void = () => {};
   onOpenSettings: () => void = () => {};
   onCycleStartDayChange: (day: number) => void = (_day: number) => {};
@@ -108,23 +107,6 @@ export struct LedgerHomeView {
           this.onRestoreScrollComplete();
         }
       });
-
-      Row() {
-        Button('账本')
-          .layoutWeight(1)
-          .backgroundColor('#E8F0FE')
-          .fontColor('#2457C5');
-        Button('通知')
-          .layoutWeight(1)
-          .backgroundColor('#FFFFFF')
-          .fontColor('#2457C5')
-          .onClick(() => {
-            this.onSaveScroll(this.scroller.currentOffset().yOffset);
-            this.onOpenNotificationHistory();
-          });
-      }
-      .padding({ left: 18, right: 18, top: 10, bottom: 12 })
-      .backgroundColor('#FFFFFF');
     }
     .width('100%')
     .height('100%');

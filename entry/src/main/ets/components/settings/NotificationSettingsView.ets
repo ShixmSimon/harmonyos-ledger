@@ -235,6 +235,7 @@ export struct NotificationSettingsView {
         }
         .width('100%')
         .alignItems(HorizontalAlign.Start)
+        .justifyContent(FlexAlign.Start)
         .padding({ left: 18, right: 18, bottom: 24 });
       }
       .layoutWeight(1)
@@ -242,6 +243,7 @@ export struct NotificationSettingsView {
     }
     .width('100%')
     .height('100%')
+    .justifyContent(FlexAlign.Start)
     .backgroundColor('#F6F7F9');
   }
 }
