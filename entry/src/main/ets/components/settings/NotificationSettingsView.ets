@@ -25,7 +25,6 @@ export struct NotificationSettingsView {
 
   onBack: () => void = () => {};
   onOpenPermission: () => void = () => {};
-  onOpenHistory: () => void = () => {};
   onOpenRules: () => void = () => {};
   onRefresh: () => void = () => {};
   onFindDevices: () => void = () => {};
@@ -82,26 +81,6 @@ export struct NotificationSettingsView {
               .backgroundColor('#E9F1FF')
               .fontColor('#2457C5')
               .onClick(() => this.onOpenRules());
-          }
-          .width('100%')
-          .alignItems(HorizontalAlign.Start)
-          .padding(16)
-          .backgroundColor('#FFFFFF')
-          .borderRadius(14);
-
-          Column({ space: 8 }) {
-            Text('通知历史')
-              .fontSize(17)
-              .fontWeight(FontWeight.Bold)
-              .fontColor('#172B4D');
-            Text('查看系统投递给本应用的通知，可按来源、关键词和日期筛选；详情文字支持选择和复制。')
-              .fontSize(13)
-              .fontColor('#52606D');
-            Button('查看通知历史')
-              .width('100%')
-              .backgroundColor('#E9F1FF')
-              .fontColor('#2457C5')
-              .onClick(() => this.onOpenHistory());
           }
           .width('100%')
           .alignItems(HorizontalAlign.Start)

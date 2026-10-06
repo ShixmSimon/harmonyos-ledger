@@ -381,9 +381,6 @@ struct Index {
         onBack: () => {
           this.mainTabNavigation = navigateNotificationTo('history');
         },
-        onOpenHistory: () => {
-          this.mainTabNavigation = navigateNotificationTo('history');
-        },
         onOpenRules: () => {
           this.mainTabNavigation = navigateNotificationTo('rules');
         },

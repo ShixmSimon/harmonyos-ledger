@@ -46,31 +46,6 @@ export struct SettingsView {
           .borderRadius(14);
 
           Column({ space: 8 }) {
-            Text('数据备份')
-              .fontSize(17)
-              .fontWeight(FontWeight.Bold)
-              .fontColor('#172B4D');
-            Text('导出全部账目，或从本应用导出的 CSV 恢复账目。导入前会检查无效记录和重复记录。')
-              .fontSize(13)
-              .fontColor('#52606D');
-            Button('导入本应用 CSV')
-              .width('100%')
-              .backgroundColor('#E9F1FF')
-              .fontColor('#2457C5')
-              .onClick(() => this.onImportCsv());
-            Button('导出全部账目为 CSV')
-              .width('100%')
-              .backgroundColor('#2857C5')
-              .fontColor('#FFFFFF')
-              .onClick(() => this.onExportCsv());
-          }
-          .width('100%')
-          .alignItems(HorizontalAlign.Start)
-          .padding(16)
-          .backgroundColor('#FFFFFF')
-          .borderRadius(14);
-
-          Column({ space: 8 }) {
             Text('记账周期')
               .fontSize(17)
               .fontWeight(FontWeight.Bold)
@@ -105,6 +80,31 @@ export struct SettingsView {
               .backgroundColor('#E9F1FF')
               .fontColor('#2457C5')
               .onClick(() => this.onOpenOcrRules());
+          }
+          .width('100%')
+          .alignItems(HorizontalAlign.Start)
+          .padding(16)
+          .backgroundColor('#FFFFFF')
+          .borderRadius(14);
+
+          Column({ space: 8 }) {
+            Text('数据备份')
+              .fontSize(17)
+              .fontWeight(FontWeight.Bold)
+              .fontColor('#172B4D');
+            Text('导出全部账目，或从本应用导出的 CSV 恢复账目。导入前会检查无效记录和重复记录。')
+              .fontSize(13)
+              .fontColor('#52606D');
+            Button('导入本应用 CSV')
+              .width('100%')
+              .backgroundColor('#E9F1FF')
+              .fontColor('#2457C5')
+              .onClick(() => this.onImportCsv());
+            Button('导出全部账目为 CSV')
+              .width('100%')
+              .backgroundColor('#2857C5')
+              .fontColor('#FFFFFF')
+              .onClick(() => this.onExportCsv());
           }
           .width('100%')
           .alignItems(HorizontalAlign.Start)
