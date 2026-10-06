@@ -7,6 +7,7 @@ export struct SettingsView {
   onBack: () => void = () => {};
   onCycleStartDayChange: (day: number) => void = (_day: number) => {};
   onOpenNotificationSettings: () => void = () => {};
+  onOpenOcrRules: () => void = () => {};
   onExportCsv: () => void = () => {};
   onImportCsv: () => void = () => {};
 
@@ -85,6 +86,26 @@ export struct SettingsView {
             Text('年统计仍按自然年。')
               .fontSize(12)
               .fontColor('#7B8794');
+          }
+          .width('100%')
+          .alignItems(HorizontalAlign.Start)
+          .padding(16)
+          .backgroundColor('#FFFFFF')
+          .borderRadius(14);
+
+          Column({ space: 8 }) {
+            Text('截图 OCR')
+              .fontSize(17)
+              .fontWeight(FontWeight.Bold)
+              .fontColor('#172B4D');
+            Text('管理微信、支付宝和工商银行截图的来源、字段与过滤规则。识别结果仍需复核后保存。')
+              .fontSize(13)
+              .fontColor('#52606D');
+            Button('管理 OCR 识别规则')
+              .width('100%')
+              .backgroundColor('#E9F1FF')
+              .fontColor('#2457C5')
+              .onClick(() => this.onOpenOcrRules());
           }
           .width('100%')
           .alignItems(HorizontalAlign.Start)

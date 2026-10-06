@@ -5,8 +5,8 @@ import {
   decodeNotificationRuleStore,
   validateNotificationRule,
   parseNotificationEntry
-} from '../entry/src/main/ets/services/notificationRules/NotificationRuleEngine.ts';
-import { parseAmountFen } from '../entry/src/main/ets/services/notificationRules/AmountParser.ts';
+} from '../entry/src/main/ets/services/notificationRules/NotificationRuleEngine.ets';
+import { parseAmountFen } from '../entry/src/main/ets/services/notificationRules/AmountParser.ets';
 
 function customRule(overrides = {}) {
   return {
@@ -199,10 +199,11 @@ test('default rule storage seeds only a missing value and preserves a saved empt
   const missing = decodeNotificationRuleStore(undefined);
   const empty = decodeNotificationRuleStore(JSON.stringify({ version: 1, rules: [] }));
   assert.equal(missing.persistDefaults, true);
-  assert.equal(missing.rules.length, 2);
+  assert.equal(missing.rules.length, 4);
   assert.equal(missing.rules[0].entrySource, 'icbc');
   assert.equal(missing.rules[1].entrySource, 'citic');
-  assert.deepEqual(empty, { rules: [], persistDefaults: false });
+  assert.equal(empty.rules.length, 0);
+  assert.equal(empty.persistDefaults, false);
 });
 
 test('corrupt or unsupported stored rules fail instead of silently restoring defaults', () => {

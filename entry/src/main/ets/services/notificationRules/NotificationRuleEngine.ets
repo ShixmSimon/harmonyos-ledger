@@ -1,13 +1,14 @@
-import { parseAmountFen } from './AmountParser.ts';
+import { parseAmountFen } from './AmountParser';
 import type {
   NotificationCategoryMapping,
   NotificationDateStrategy,
   NotificationInput,
   NotificationRule,
   NotificationRuleLoadResult,
+  NotificationRuleStore,
   ParsedNotificationEntry,
   RuleValidationIssue
-} from './NotificationRuleModels.ts';
+} from './NotificationRuleModels';
 
 const HALF_YEAR_MS = 183 * 24 * 60 * 60 * 1000;
 const BLOCKED_BODY_PATTERN = /(交易失败|扣款失败|交易取消|已撤销)/;
@@ -172,8 +173,11 @@ function countCaptureGroups(pattern: string): number {
   return count;
 }
 
-function isPositiveGroup(group: number | undefined): group is number {
-  return typeof group === 'number' && Number.isInteger(group) && group > 0;
+function isPositiveGroup(group: number | undefined): boolean {
+  if (group === undefined) {
+    return false;
+  }
+  return Number.isInteger(group) && group > 0;
 }
 
 function validateGroupReference(
@@ -185,7 +189,7 @@ function validateGroupReference(
   if (group === undefined && !required) {
     return undefined;
   }
-  if (!isPositiveGroup(group)) {
+  if (group === undefined || !isPositiveGroup(group)) {
     return { field, message: '捕获组编号必须是正整数' };
   }
   if (group > captureCount) {
@@ -311,18 +315,19 @@ export function decodeNotificationRuleStore(value: string | undefined): Notifica
   if (value === undefined) {
     return { rules: createDefaultNotificationRules(), persistDefaults: true };
   }
-  let stored: unknown;
+  let stored: Object;
   try {
-    stored = JSON.parse(value);
+    stored = JSON.parse(value) as Object;
   } catch (_error) {
     throw new Error('通知规则数据格式无效');
   }
-  if (stored === null || typeof stored !== 'object' ||
-    (stored as { version?: unknown }).version !== 1 ||
-    !Array.isArray((stored as { rules?: unknown }).rules)) {
+  if (!(stored instanceof Object) || Array.isArray(stored)) {
     throw new Error('通知规则数据版本或内容无效');
   }
-  const store = stored as { rules: NotificationRule[]; defaultRulesVersion?: unknown };
+  const store = stored as NotificationRuleStore;
+  if (store.version !== 1 || !Array.isArray(store.rules)) {
+    throw new Error('通知规则数据版本或内容无效');
+  }
   if (store.defaultRulesVersion !== undefined && store.defaultRulesVersion !== 1) {
     throw new Error('通知规则默认项版本无效');
   }
@@ -365,6 +370,16 @@ interface ParsedDateFields {
   minute: number;
 }
 
+interface ParsedDateTokenValues {
+  year?: number;
+  month?: number;
+  shortMonth?: number;
+  day?: number;
+  shortDay?: number;
+  hour?: number;
+  minute?: number;
+}
+
 function parseDateFields(value: string, format: string): ParsedDateFields | undefined {
   const tokens: string[] = [];
   let pattern = '^';
@@ -393,22 +408,39 @@ function parseDateFields(value: string, format: string): ParsedDateFields | unde
   if (match === null) {
     return undefined;
   }
-  const values: { [key: string]: number } = {};
+  const values: ParsedDateTokenValues = {};
   tokens.forEach((token: string, index: number) => {
-    values[token] = Number(match[index + 1]);
+    const value = Number(match[index + 1]);
+    if (token === 'yyyy') {
+      values.year = value;
+    } else if (token === 'MM') {
+      values.month = value;
+    } else if (token === 'M') {
+      values.shortMonth = value;
+    } else if (token === 'dd') {
+      values.day = value;
+    } else if (token === 'd') {
+      values.shortDay = value;
+    } else if (token === 'HH') {
+      values.hour = value;
+    } else if (token === 'mm') {
+      values.minute = value;
+    }
   });
-  if (values['M'] === undefined && values['MM'] === undefined) {
+  const month = values.month ?? values.shortMonth;
+  const day = values.day ?? values.shortDay;
+  if (month === undefined) {
     return undefined;
   }
-  if (values['d'] === undefined && values['dd'] === undefined) {
+  if (day === undefined) {
     return undefined;
   }
   return {
-    year: values['yyyy'],
-    month: values['MM'] ?? values['M'],
-    day: values['dd'] ?? values['d'],
-    hour: values['HH'] ?? 0,
-    minute: values['mm'] ?? 0
+    year: values.year,
+    month: month,
+    day: day,
+    hour: values.hour ?? 0,
+    minute: values.minute ?? 0
   };
 }
 

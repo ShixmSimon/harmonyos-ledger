@@ -1,5 +1,8 @@
-import { DraftEntry, EntryDirection, EntrySource, LedgerEntry, formatDateOnly, formatDateTime, makeId, parseAmountFen, parseDateTime } from '../model/LedgerModels';
-import { OcrLine } from '../model/OcrModels';
+import type { DraftEntry, EntryDirection, EntrySource, LedgerEntry } from '../model/LedgerModels';
+import { formatDateOnly, formatDateTime, makeId, parseAmountFen, parseDateTime } from '../model/LedgerModels';
+import type { OcrLine } from '../model/OcrModels';
+import type { OcrRule } from './ocrRules/OcrRuleModels';
+import { mapOcrCategory, matchOcrPattern, matchesOcrKeyword, matchesOcrPatterns, parseOcrDateByFormat, parseOcrTimeByPattern } from './ocrRules/OcrRuleEngine';
 
 interface VisualRow {
   text: string;
@@ -30,12 +33,6 @@ interface TimeOfDay {
   hour: number;
   minute: number;
 }
-
-const ALIPAY_CATEGORY_LABELS: string[] = [
-  '餐饮美食', '日用百货', '交通出行', '数码电器', '服饰装扮', '文化休闲', '商业服务', '信用借还',
-  '充值缴费', '生活服务', '医疗健康', '运动户外', '教育培训', '美容美发', '酒店旅游', '宠物生活',
-  '母婴亲子', '食品酒水', '家居家装', '生活缴费', '公益', '保险', '转账'
-];
 
 function median(values: number[]): number {
   if (values.length === 0) {
@@ -188,46 +185,39 @@ function makeDate(year: number, month: number, day: number, hour: number = 0, mi
   return date.getTime();
 }
 
-function extractAmount(text: string): AmountToken | undefined {
-  const searchable = text
+function extractAmount(text: string, rule: OcrRule): AmountToken | undefined {
+  let searchable = text;
+  const dateText = matchOcrPattern(text, rule.datePattern);
+  if (dateText !== undefined) {
+    searchable = searchable.replace(dateText, ' ');
+  }
+  searchable = searchable
     .replace(/20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}日?/g, ' ')
     .replace(/\d{1,2}月\d{1,2}日/g, ' ')
     .replace(/\d{1,2}:\d{2}/g, ' ')
     .replace(/\d{1,2}[-/]\d{1,2}/g, ' ');
-  let raw = '';
-  let numeric = '';
-  let sign = '';
-  const explicit = searchable.match(/(?:[+-]\s*[¥￥]?\s*\d+(?:[,.]\d{3})*(?:[,.]\d{1,2})?|[¥￥]\s*[+-]?\s*\d+(?:[,.]\d{3})*(?:[,.]\d{1,2})?)/);
-  if (explicit !== null) {
-    raw = explicit[0].trim();
-    const numberMatch = raw.match(/\d+(?:[,.]\d{3})*(?:[,.]\d{1,2})?/);
-    if (numberMatch === null) {
-      return undefined;
-    }
-    numeric = numberMatch[0];
-    sign = raw.indexOf('-') >= 0 ? '-' : (raw.indexOf('+') >= 0 ? '+' : '');
-  } else {
-    const decimalPattern = /\d+(?:[,.]\d{3})*[,.]\d{1,2}/g;
-    let decimalMatch = decimalPattern.exec(searchable);
-    while (decimalMatch !== null) {
-      raw = decimalMatch[0];
-      numeric = decimalMatch[0];
-      decimalMatch = decimalPattern.exec(searchable);
-    }
+  const rawMatch = matchOcrPattern(searchable, rule.amountPattern);
+  if (rawMatch === undefined) {
+    return undefined;
   }
+  const raw = rawMatch.trim();
+  const numeric = raw.replace(/[+\-¥￥\s]/g, '');
   const fen = parseAmountFen(numeric);
   if (fen === undefined || fen <= 0) {
     return undefined;
   }
   let direction: EntryDirection | undefined = undefined;
-  if (sign === '-') {
+  if (raw.indexOf('-') >= 0) {
     direction = 'expense';
-  } else if (sign === '+') {
+  } else if (raw.indexOf('+') >= 0) {
     direction = 'income';
-  } else if (/(收入|收款|入账)/.test(text)) {
-    direction = 'income';
-  } else if (/(支出|付款|消费)/.test(text)) {
-    direction = 'expense';
+  } else {
+    const directionText = matchOcrPattern(text, rule.directionPattern) ?? text;
+    if (matchesOcrKeyword(directionText, rule.incomeKeywords)) {
+      direction = 'income';
+    } else if (matchesOcrKeyword(directionText, rule.expenseKeywords)) {
+      direction = 'expense';
+    }
   }
   return {
     fen: fen,
@@ -236,43 +226,83 @@ function extractAmount(text: string): AmountToken | undefined {
   };
 }
 
-function isSummaryRow(text: string): boolean {
-  return /(收支统计|月账单|总支出|总收入|本月支出|本月收入|合计|净收入|余额|可用金额)/.test(text) ||
-    /(收入.*支出|支出.*收入)/.test(text) ||
-    /^\s*(收入|支出)\s*[¥￥]?\s*\d+(?:[,.]\d{3})*(?:[,.]\d{1,2})?\s*$/.test(text);
+function isSummaryRow(text: string, rule: OcrRule): boolean {
+  return matchesOcrPatterns(text, rule.summaryPatterns);
 }
 
-function isSummaryValueRow(rows: VisualRow[], rowIndex: number): boolean {
-  if (!/^\s*[¥￥]?\s*\d+(?:[,.]\d{3})*(?:[,.]\d{1,2})?\s*$/.test(rows[rowIndex].text)) {
+function isSummaryValueRow(rows: VisualRow[], rowIndex: number, rule: OcrRule): boolean {
+  const rowText = rows[rowIndex].text.trim();
+  const amountText = matchOcrPattern(rowText, rule.amountPattern);
+  if (amountText === undefined || /[+-]/.test(amountText) ||
+    rowText.replace(amountText, '').replace(/[¥￥\s]/g, '').length > 0) {
     return false;
   }
   const nearbyLabels = rows.slice(Math.max(0, rowIndex - 2), rowIndex)
     .map((row: VisualRow) => row.text)
     .join(' ');
-  return /(收入|支出)/.test(nearbyLabels);
+  return /(收入|支出)/.test(nearbyLabels) || matchesOcrPatterns(nearbyLabels, rule.summaryPatterns);
+}
+
+function parseRuleDateHeader(text: string, rule: OcrRule, baseDate: Date | undefined,
+  dateContext: DateContext | undefined): ParsedDateTime | undefined {
+  const dateText = matchOcrPattern(text, rule.datePattern);
+  if (dateText === undefined) {
+    return undefined;
+  }
+  if (rule.dateFormat === 'auto') {
+    const configuredTime = parseOcrTimeByPattern(text, rule.timePattern);
+    const normalizedDate = parseTimeOfDay(dateText) !== undefined || configuredTime === undefined ? dateText :
+      dateText + ' ' + configuredTime.hour + ':' + String(configuredTime.minute).padStart(2, '0');
+    return parseDateHeader(normalizedDate, baseDate, dateContext);
+  }
+  const parts = parseOcrDateByFormat(dateText, rule.dateFormat);
+  if (parts === undefined || parts.day === undefined) {
+    return undefined;
+  }
+  const month = parts.month ?? dateContext?.month ?? (baseDate === undefined ? undefined : baseDate.getMonth() + 1);
+  if (month === undefined) {
+    return undefined;
+  }
+  const year = parts.year ?? inferYear(month, parts.day, baseDate, dateContext);
+  if (year === undefined) {
+    return undefined;
+  }
+  const configuredTime = parseOcrTimeByPattern(text, rule.timePattern);
+  const hour = parts.hour ?? configuredTime?.hour ?? 0;
+  const minute = parts.minute ?? configuredTime?.minute ?? 0;
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    return undefined;
+  }
+  const timestamp = makeDate(year, month, parts.day, hour, minute);
+  if (timestamp === undefined) {
+    return undefined;
+  }
+  return { timestamp: timestamp, hasTime: (parts.hour !== undefined && parts.minute !== undefined) ||
+    configuredTime !== undefined };
 }
 
 function transactionDate(
   rows: VisualRow[],
   rowIndex: number,
   baseDate: Date | undefined,
-  dateContext: DateContext | undefined
+  dateContext: DateContext | undefined,
+  rule: OcrRule
 ): ParsedDateTime | undefined {
-  const inlineDate = parseDateHeader(rows[rowIndex].text, baseDate, dateContext);
+  const inlineDate = parseRuleDateHeader(rows[rowIndex].text, rule, baseDate, dateContext);
   if (inlineDate !== undefined) {
     return inlineDate;
   }
   let nearbyDate: ParsedDateTime | undefined = undefined;
   for (let index = rowIndex + 1; index < rows.length; index++) {
     const candidate = rows[index];
-    const candidateDate = parseDateHeader(candidate.text, baseDate, dateContext);
+    const candidateDate = parseRuleDateHeader(candidate.text, rule, baseDate, dateContext);
     if (candidateDate !== undefined) {
       if (candidateDate.hasTime) {
         return candidateDate;
       }
       nearbyDate = candidateDate;
     }
-    if (!isSummaryRow(candidate.text) && extractAmount(candidate.text) !== undefined) {
+    if (!isSummaryRow(candidate.text, rule) && extractAmount(candidate.text, rule) !== undefined) {
       break;
     }
   }
@@ -282,35 +312,38 @@ function transactionDate(
   return undefined;
 }
 
-function isFailedRow(text: string): boolean {
-  return /(已关闭|已取消|支付失败|交易失败|已撤销|交易关闭)/.test(text);
+function isFailedRow(text: string, rule: OcrRule): boolean {
+  return matchesOcrPatterns(text, rule.failurePatterns);
 }
 
-function isRefundRow(text: string): boolean {
-  return /(退款|退回|已退)/.test(text);
+function isRefundRow(text: string, rule: OcrRule): boolean {
+  return matchesOcrPatterns(text, rule.refundPatterns);
 }
 
 function alipayCategoryForTransaction(
   rows: VisualRow[],
   rowIndex: number,
   baseDate: Date | undefined,
-  dateContext: DateContext | undefined
+  dateContext: DateContext | undefined,
+  rule: OcrRule
 ): string | undefined {
   for (let index = rowIndex + 1; index < rows.length; index++) {
     const candidate = rows[index];
-    if (!isSummaryRow(candidate.text) && !isSummaryValueRow(rows, index) &&
-      extractAmount(candidate.text) !== undefined) {
+    if (!isSummaryRow(candidate.text, rule) && !isSummaryValueRow(rows, index, rule) &&
+      extractAmount(candidate.text, rule) !== undefined) {
       break;
     }
-    const candidateDate = parseDateHeader(candidate.text, baseDate, dateContext);
+    const candidateDate = parseRuleDateHeader(candidate.text, rule, baseDate, dateContext);
     if (candidateDate !== undefined && candidateDate.hasTime) {
       break;
     }
-    const normalized = candidate.text.replace(/\s/g, '');
-    for (const category of ALIPAY_CATEGORY_LABELS) {
-      if (normalized === category || normalized.indexOf(category) === 0) {
-        return category;
-      }
+    const mapped = mapOcrCategory(candidate.text, rule);
+    const categoryText = matchOcrPattern(candidate.text, rule.categoryPattern);
+    if (mapped !== undefined) {
+      return mapped;
+    }
+    if (categoryText !== undefined) {
+      return mapOcrCategory(categoryText, rule) ?? categoryText;
     }
   }
   return undefined;
@@ -318,6 +351,18 @@ function alipayCategoryForTransaction(
 
 function cleanMerchant(text: string, amount: AmountToken): string {
   return text.replace(amount.raw, '').trim();
+}
+
+function configuredMerchant(row: VisualRow, nearby: VisualRow[], rule: OcrRule): string {
+  const candidates = [row, ...nearby].slice().sort((left: VisualRow, right: VisualRow) =>
+    Math.abs(left.centerY - row.centerY) - Math.abs(right.centerY - row.centerY));
+  for (const candidate of candidates) {
+    const merchant = matchOcrPattern(candidate.text, rule.merchantPattern);
+    if (merchant !== undefined && merchant.trim().length > 0) {
+      return merchant.trim();
+    }
+  }
+  return '';
 }
 
 function dateText(date: ParsedDateTime | undefined): string {
@@ -370,8 +415,9 @@ export class ReceiptParser {
   static parse(
     lines: OcrLine[],
     source: EntrySource,
+    rule: OcrRule,
     existing: LedgerEntry[],
-    priorDrafts: DraftEntry[] = [],
+    priorDrafts: DraftEntry[],
     captureTime?: number
   ): DraftEntry[] {
     const rows = buildRows(lines);
@@ -387,12 +433,12 @@ export class ReceiptParser {
         dateContext = monthContext;
         continue;
       }
-      const headerDate = parseDateHeader(row.text, baseDate, dateContext);
-      const rowAmount = extractAmount(row.text);
+      const headerDate = parseRuleDateHeader(row.text, rule, baseDate, dateContext);
+      const rowAmount = extractAmount(row.text, rule);
       if (headerDate !== undefined && rowAmount === undefined) {
         continue;
       }
-      if (isSummaryRow(row.text) || isSummaryValueRow(rows, index)) {
+      if (isSummaryRow(row.text, rule) || isSummaryValueRow(rows, index, rule)) {
         continue;
       }
       const amount = rowAmount;
@@ -415,29 +461,30 @@ export class ReceiptParser {
         }
       }
       const context = contextParts.join(' ');
-      if (isFailedRow(context)) {
+      if (isFailedRow(context, rule)) {
         continue;
       }
-      const happenedAt = transactionDate(rows, index, baseDate, dateContext);
+      const happenedAt = transactionDate(rows, index, baseDate, dateContext, rule);
       if (happenedAt === undefined) {
         continue;
       }
 
-      let merchant = cleanMerchant(row.text, amount);
-      if (merchant.length === 0) {
+      let merchant = rule.merchantPattern === undefined ? cleanMerchant(row.text, amount) :
+        configuredMerchant(row, nearby, rule);
+      if (merchant.length === 0 && rule.merchantPattern === undefined) {
         nearby.sort((left: VisualRow, right: VisualRow) =>
           Math.abs(left.centerY - row.centerY) - Math.abs(right.centerY - row.centerY));
         for (const candidate of nearby) {
-          if (parseDateHeader(candidate.text, baseDate, dateContext) === undefined &&
-            extractAmount(candidate.text) === undefined &&
-            !isSummaryRow(candidate.text) && !isFailedRow(candidate.text)) {
+          if (parseRuleDateHeader(candidate.text, rule, baseDate, dateContext) === undefined &&
+            extractAmount(candidate.text, rule) === undefined &&
+            !isSummaryRow(candidate.text, rule) && !isFailedRow(candidate.text, rule)) {
             merchant = candidate.text.replace(/\d{1,2}:\d{2}/g, '').trim();
             break;
           }
         }
       }
 
-      const refund = isRefundRow(context);
+      const refund = isRefundRow(context, rule);
       let direction = amount.direction;
       const warnings: string[] = [];
       if (refund) {
@@ -454,13 +501,19 @@ export class ReceiptParser {
         warnings.push('与已有账目相似，可能是重复记录');
       }
 
-      let category = '其他';
+      let category = rule.defaultCategory;
       if (refund) {
         category = '退款';
-      } else if (source === 'alipay') {
-        const recognizedCategory = alipayCategoryForTransaction(rows, index, baseDate, dateContext);
-        if (recognizedCategory !== undefined) {
-          category = recognizedCategory;
+      } else {
+        const categoryText = matchOcrPattern(context, rule.categoryPattern);
+        const mappedCategory = mapOcrCategory(context, rule) ??
+          (categoryText === undefined ? undefined : mapOcrCategory(categoryText, rule));
+        const recognizedCategory = source === 'alipay' ?
+          alipayCategoryForTransaction(rows, index, baseDate, dateContext, rule) : undefined;
+        if (categoryText !== undefined) {
+          category = mappedCategory ?? categoryText;
+        } else if (mappedCategory !== undefined || recognizedCategory !== undefined) {
+          category = mappedCategory ?? recognizedCategory as string;
         }
       }
 

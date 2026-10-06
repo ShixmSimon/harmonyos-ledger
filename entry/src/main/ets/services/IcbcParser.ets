@@ -1,5 +1,8 @@
-import { DraftEntry, EntryDirection, EntrySource, LedgerEntry, formatDateOnly, formatDateTime, makeId, parseAmountFen, parseDateTime } from '../model/LedgerModels';
-import { OcrLine } from '../model/OcrModels';
+import type { DraftEntry, EntryDirection, EntrySource, LedgerEntry } from '../model/LedgerModels';
+import { formatDateOnly, formatDateTime, makeId, parseAmountFen, parseDateTime } from '../model/LedgerModels';
+import type { OcrLine } from '../model/OcrModels';
+import type { OcrRule } from './ocrRules/OcrRuleModels';
+import { mapOcrCategory, matchOcrPattern, matchesOcrKeyword, matchesOcrPatterns, parseOcrDateByFormat, parseOcrTimeByPattern } from './ocrRules/OcrRuleEngine';
 
 interface VisualRow {
   text: string;
@@ -15,7 +18,7 @@ interface MonthContext {
 
 interface ParsedAmount {
   fen: number;
-  direction: EntryDirection;
+  direction: EntryDirection | undefined;
   raw: string;
 }
 
@@ -123,8 +126,26 @@ function resolveWeekday(text: string, month: MonthContext | undefined, imageDate
   return undefined;
 }
 
-function parseDateMarker(text: string, month: MonthContext | undefined, imageDate: Date | undefined): number | undefined {
-  const normalized = text.replace(/\s/g, '');
+function parseDateMarker(text: string, month: MonthContext | undefined, imageDate: Date | undefined,
+  rule: OcrRule): number | undefined {
+  const captured = matchOcrPattern(text, rule.datePattern);
+  if (captured === undefined) {
+    return undefined;
+  }
+  if (rule.layoutStrategy === 'icbc-statement' && /^\d{1,2}$/.test(captured.trim()) &&
+    !/^\s*\d{1,2}\s*$/.test(text)) {
+    return undefined;
+  }
+  if (rule.dateFormat !== 'auto') {
+    const parts = parseOcrDateByFormat(captured, rule.dateFormat);
+    if (parts === undefined || parts.day === undefined) {
+      return undefined;
+    }
+    const monthValue = parts.month ?? month?.month;
+    const year = parts.year ?? month?.year ?? imageDate?.getFullYear();
+    return monthValue === undefined || year === undefined ? undefined : makeDate(year, monthValue, parts.day);
+  }
+  const normalized = captured.replace(/\s/g, '');
   const full = normalized.match(/(20\d{2})[-/.年](\d{1,2})[-/.月](\d{1,2})日?/);
   if (full !== null) {
     return makeDate(Number(full[1]), Number(full[2]), Number(full[3]));
@@ -141,38 +162,43 @@ function parseDateMarker(text: string, month: MonthContext | undefined, imageDat
   return resolveWeekday(normalized, month, imageDate);
 }
 
-function parseSignedAmount(text: string): ParsedAmount | undefined {
-  if (/余额|人民币余额|当页汇总|收\s*[¥￥]|支\s*[¥￥]/.test(text)) {
+function parseSignedAmount(text: string, rule: OcrRule): ParsedAmount | undefined {
+  if (/余额|人民币余额|当页汇总|收\s*[¥￥]|支\s*[¥￥]/.test(text) ||
+    matchesOcrPatterns(text, rule.summaryPatterns)) {
     return undefined;
   }
-  const match = text.match(/[+-]\s*[¥￥]?\s*\d+(?:[,.]\d{3})*(?:[,.]\d{1,2})?/);
-  if (match === null) {
+  const raw = matchOcrPattern(text, rule.amountPattern);
+  if (raw === undefined) {
     return undefined;
   }
-  const raw = match[0].trim();
-  const numeric = raw.replace(/[+\-¥￥\s]/g, '');
+  const trimmed = raw.trim();
+  const numeric = trimmed.replace(/[+\-¥￥\s]/g, '');
   const fen = parseAmountFen(numeric);
   if (fen === undefined || fen <= 0) {
     return undefined;
   }
+  let direction: EntryDirection | undefined = undefined;
+  if (trimmed.indexOf('-') >= 0) {
+    direction = 'expense';
+  } else if (trimmed.indexOf('+') >= 0) {
+    direction = 'income';
+  } else {
+    const directionText = matchOcrPattern(text, rule.directionPattern) ?? text;
+    if (matchesOcrKeyword(directionText, rule.incomeKeywords)) {
+      direction = 'income';
+    } else if (matchesOcrKeyword(directionText, rule.expenseKeywords)) {
+      direction = 'expense';
+    }
+  }
   return {
     fen: fen,
-    direction: raw.indexOf('-') >= 0 ? 'expense' : 'income',
-    raw: raw
+    direction: direction,
+    raw: trimmed
   };
 }
 
-function parseTime(text: string): TimeOfDay | undefined {
-  const match = text.match(/(?:^|\D)(\d{1,2}):(\d{2})(?::\d{2})?(?:\D|$)/);
-  if (match === null) {
-    return undefined;
-  }
-  const hour = Number(match[1]);
-  const minute = Number(match[2]);
-  if (hour > 23 || minute > 59) {
-    return undefined;
-  }
-  return { hour: hour, minute: minute };
+function parseTime(text: string, rule: OcrRule): TimeOfDay | undefined {
+  return parseOcrTimeByPattern(text, rule.timePattern);
 }
 
 function withTime(date: number, time: TimeOfDay | undefined): number {
@@ -187,42 +213,45 @@ function isBalanceRow(text: string): boolean {
   return /余额\s*[:：]/.test(text);
 }
 
-function isFailedBlock(rows: VisualRow[]): boolean {
-  return /(交易失败|交易关闭|已撤销|已取消|失败)/.test(rows.map((row: VisualRow) => row.text).join(' '));
+function isFailedBlock(rows: VisualRow[], rule: OcrRule): boolean {
+  return matchesOcrPatterns(rows.map((row: VisualRow) => row.text).join(' '), rule.failurePatterns);
 }
 
-function isRefundBlock(rows: VisualRow[]): boolean {
-  return /(退款|退回|已退)/.test(rows.map((row: VisualRow) => row.text).join(' '));
+function isRefundBlock(rows: VisualRow[], rule: OcrRule): boolean {
+  return matchesOcrPatterns(rows.map((row: VisualRow) => row.text).join(' '), rule.refundPatterns);
 }
 
-function isNoiseMerchant(text: string): boolean {
+function isNoiseMerchant(text: string, rule: OcrRule): boolean {
   return text.length === 0 ||
     /余额|人民币余额|借记卡|信用卡|尾号|当页汇总|^(周[一二三四五六日天]|\d{1,2})$/.test(text) ||
     /^(消费|转账|收入|支出|ATM取款)$/.test(text) ||
     /^[-—–]+$/.test(text) ||
     parseMonth(text, undefined) !== undefined ||
-    parseSignedAmount(text) !== undefined ||
-    parseTime(text) !== undefined;
+    parseSignedAmount(text, rule) !== undefined ||
+    parseTime(text, rule) !== undefined;
 }
 
-function merchantAndCategory(rows: VisualRow[]): MerchantDetails {
-  let category = '其他';
+function merchantAndCategory(rows: VisualRow[], rule: OcrRule): MerchantDetails {
+  let category = rule.defaultCategory;
   const parts: string[] = [];
   rows.forEach((row: VisualRow) => {
     const original = row.text.trim();
+    const mappedCategory = mapOcrCategory(original, rule);
+    if (mappedCategory !== undefined) {
+      category = mappedCategory;
+    }
+    const categoryText = matchOcrPattern(original, rule.categoryPattern);
+    if (categoryText !== undefined) {
+      category = mapOcrCategory(categoryText, rule) ?? categoryText;
+    }
+    const configured = matchOcrPattern(original, rule.merchantPattern);
     const text = original
-      .replace(/[+-]\s*[¥￥]?\s*\d+(?:[,.]\d{3})*(?:[,.]\d{1,2})?/g, '')
+      .replace(new RegExp(rule.amountPattern.pattern, 'i'), '')
       .replace(/\d{1,2}:\d{2}(?::\d{2})?/g, '')
       .trim();
-    if (/ATM取款/.test(original)) {
-      category = '取现';
-    } else if (/贷款本息/.test(original)) {
-      category = '贷款';
-    } else if (/消费/.test(original) && category === '其他') {
-      category = '消费';
-    }
-    if (!isNoiseMerchant(text) && !parts.includes(text)) {
-      parts.push(text);
+    const merchant = rule.merchantPattern === undefined ? text : (configured ?? '').trim();
+    if (categoryText === undefined && !isNoiseMerchant(merchant, rule) && !parts.includes(merchant)) {
+      parts.push(merchant);
     }
   });
   let merchant = parts.length > 0 ? parts[parts.length - 1] : '';
@@ -243,6 +272,7 @@ function sameDay(first: number, second: number): boolean {
 }
 
 function isDuplicate(
+  source: EntrySource,
   date: number,
   amount: ParsedAmount,
   merchant: string,
@@ -252,14 +282,14 @@ function isDuplicate(
 ): boolean {
   const normalized = merchant.replace(/\s/g, '').toLowerCase();
   for (const entry of existing) {
-    if (entry.source === 'icbc' && entry.amountFen === amount.fen && sameDay(entry.happenedAt, date) &&
+    if (entry.source === source && entry.amountFen === amount.fen && sameDay(entry.happenedAt, date) &&
       entry.merchant.replace(/\s/g, '').toLowerCase() === normalized) {
       return true;
     }
   }
   for (const draft of priorDrafts.concat(drafts)) {
     const draftDate = parseDateTime(draft.dateText);
-    if (draft.source === 'icbc' && parseAmountFen(draft.amountText) === amount.fen &&
+    if (draft.source === source && parseAmountFen(draft.amountText) === amount.fen &&
       draftDate !== undefined && sameDay(draftDate, date) &&
       draft.merchant.replace(/\s/g, '').toLowerCase() === normalized) {
       return true;
@@ -271,16 +301,17 @@ function isDuplicate(
 function parseBlock(
   rows: VisualRow[],
   date: number | undefined,
+  rule: OcrRule,
   existing: LedgerEntry[],
   priorDrafts: DraftEntry[],
   result: DraftEntry[]
 ): void {
-  if (rows.length === 0 || isFailedBlock(rows)) {
+  if (rows.length === 0 || isFailedBlock(rows, rule)) {
     return;
   }
   const amounts: AmountRow[] = [];
   rows.forEach((row: VisualRow, index: number) => {
-    const amount = parseSignedAmount(row.text);
+    const amount = parseSignedAmount(row.text, rule);
     if (amount !== undefined) {
       amounts.push({ index: index, value: amount });
     }
@@ -289,7 +320,7 @@ function parseBlock(
     const amount = candidate.value;
     const times: TimeRow[] = [];
     rows.forEach((row: VisualRow, index: number) => {
-      const time = parseTime(row.text);
+      const time = parseTime(row.text, rule);
       if (time !== undefined) {
         times.push({ index: index, value: time });
       }
@@ -308,23 +339,26 @@ function parseBlock(
       continue;
     }
 
-    const details = merchantAndCategory(rows);
-    const refund = isRefundBlock(rows);
+    const details = merchantAndCategory(rows, rule);
+    const refund = isRefundBlock(rows, rule);
     const warnings: string[] = [];
     let direction: EntryDirection | undefined = amount.direction;
     if (refund) {
       direction = undefined;
       warnings.push('识别到退款，请确认收入或支出方向');
     }
+    if (direction === undefined && !refund) {
+      warnings.push('金额方向不明确，请选择收入或支出');
+    }
     if (details.merchant.length === 0) {
       warnings.push('未识别到商户或摘要');
     }
-    if (isDuplicate(happenedAt, amount, details.merchant, existing, priorDrafts, result)) {
+    if (isDuplicate(rule.source, happenedAt, amount, details.merchant, existing, priorDrafts, result)) {
       warnings.push('与已有账目相似，可能是重复记录');
     }
     result.push({
       id: makeId('draft'),
-      source: 'icbc',
+      source: rule.source,
       merchant: details.merchant,
       dateText: transactionTime === undefined ? formatDateOnly(happenedAt) : formatDateTime(happenedAt),
       hasTime: transactionTime !== undefined,
@@ -341,8 +375,9 @@ function parseBlock(
 export class IcbcParser {
   static parse(
     lines: OcrLine[],
+    rule: OcrRule,
     existing: LedgerEntry[],
-    priorDrafts: DraftEntry[] = [],
+    priorDrafts: DraftEntry[],
     captureTime?: number
   ): DraftEntry[] {
     const rows = buildRows(lines);
@@ -356,7 +391,7 @@ export class IcbcParser {
     rows.forEach((row: VisualRow) => {
       const newMonth = parseMonth(row.text, imageDate);
       if (newMonth !== undefined) {
-        parseBlock(blockRows, blockDate, existing, priorDrafts, result);
+        parseBlock(blockRows, blockDate, rule, existing, priorDrafts, result);
         blockRows = [];
         month = newMonth;
         currentDate = undefined;
@@ -364,7 +399,7 @@ export class IcbcParser {
         return;
       }
 
-      const marker = parseDateMarker(row.text, month, imageDate);
+      const marker = parseDateMarker(row.text, month, imageDate, rule);
       if (marker !== undefined) {
         currentDate = marker;
         blockDate = marker;
@@ -372,13 +407,14 @@ export class IcbcParser {
       blockRows.push(row);
 
       if (isBalanceRow(row.text)) {
-        parseBlock(blockRows, blockDate === undefined ? currentDate : blockDate,
+        parseBlock(blockRows, blockDate === undefined ? currentDate : blockDate, rule,
           existing, priorDrafts, result);
         blockRows = [];
         blockDate = currentDate;
       }
     });
-    parseBlock(blockRows, blockDate === undefined ? currentDate : blockDate, existing, priorDrafts, result);
+    parseBlock(blockRows, blockDate === undefined ? currentDate : blockDate, rule,
+      existing, priorDrafts, result);
     return result;
   }
 }

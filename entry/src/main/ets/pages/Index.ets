@@ -34,6 +34,9 @@ import { SettingsView } from '../components/settings/SettingsView';
 import { NotificationSettingsView, PairedNotificationDevice } from '../components/settings/NotificationSettingsView';
 import { NotificationHistoryView } from './notifications/NotificationHistoryView';
 import { NotificationRuleSettingsView } from './notifications/NotificationRuleSettingsView';
+import { OcrRuleSettingsView } from './ocr/OcrRuleSettingsView';
+import { loadOcrRules } from '../services/OcrRuleStore';
+import type { OcrRule } from '../services/ocrRules/OcrRuleModels';
 
 interface CsvImportDialogResponse {
   index: number;
@@ -50,7 +53,7 @@ struct Index {
   private ledgerRefreshRevision: number = 0;
   @State
   @Watch('onScreenChanged')
-  private screen: 'ledger' | 'editor' | 'statistics' | 'import' | 'settings' | 'notificationSettings' | 'notificationRules' | 'notificationHistory' = 'ledger';
+  private screen: 'ledger' | 'editor' | 'statistics' | 'import' | 'settings' | 'notificationSettings' | 'notificationRules' | 'ocrRules' | 'notificationHistory' = 'ledger';
   @State private drafts: DraftEntry[] = [];
   @State private unclassifiedPages: UnclassifiedOcrPage[] = [];
   @State private ocrRawText: string = '';
@@ -70,6 +73,7 @@ struct Index {
   @State private shareImportCancelled: boolean = false;
   @State private shareImportOutcomeMessage: string = '';
   private sharedImportUris: string[] = [];
+  private ocrRulesSnapshot: OcrRule[] = [];
   private ocrRequestId: number = 0;
   @State private entries: LedgerEntry[] = [];
   @State private entriesViewRevision: number = 0;
@@ -127,7 +131,8 @@ struct Index {
 
   private refreshEntriesForCurrentScreen(): void {
     if (!this.ready || this.shareImportMode || this.screen === 'settings' ||
-      this.screen === 'notificationSettings' || this.screen === 'notificationRules' || this.screen === 'notificationHistory') {
+      this.screen === 'notificationSettings' || this.screen === 'notificationRules' || this.screen === 'ocrRules' ||
+      this.screen === 'notificationHistory') {
       return;
     }
     void this.reloadEntriesSafely();
@@ -181,6 +186,10 @@ struct Index {
     }
     if (this.screen === 'notificationRules') {
       this.screen = 'notificationSettings';
+      return true;
+    }
+    if (this.screen === 'ocrRules') {
+      this.screen = 'settings';
       return true;
     }
     if (this.screen === 'notificationSettings') {
@@ -266,6 +275,9 @@ struct Index {
           onOpenNotificationSettings: () => {
             this.screen = 'notificationSettings';
           },
+          onOpenOcrRules: () => {
+            this.screen = 'ocrRules';
+          },
           onExportCsv: () => {
             void this.exportCsv();
           },
@@ -316,6 +328,12 @@ struct Index {
         NotificationRuleSettingsView({
           onBack: () => {
             this.screen = 'notificationSettings';
+          }
+        });
+      } else if (this.screen === 'ocrRules') {
+        OcrRuleSettingsView({
+          onBack: () => {
+            this.screen = 'settings';
           }
         });
       } else if (this.screen === 'notificationHistory') {
@@ -605,6 +623,7 @@ struct Index {
     this.ocrErrorMessage = '';
     this.reviewMessage = '';
     this.draftValidationErrors = [];
+    this.ocrRulesSnapshot = [];
   }
 
   private async startImport(): Promise<void> {
@@ -616,6 +635,11 @@ struct Index {
     this.ocrErrorMessage = '';
     try {
       const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const rules = await loadOcrRules(context);
+      if (requestId !== this.ocrRequestId) {
+        return;
+      }
+      this.ocrRulesSnapshot = rules;
       const recognition = await OcrImporter.chooseAndRecognize(context);
       if (requestId !== this.ocrRequestId) {
         return;
@@ -627,7 +651,7 @@ struct Index {
         this.showToast('未选择截图');
         return;
       }
-      this.applyImportResult(OcrImportCoordinator.parsePages(recognition.pages, this.entries));
+      this.applyImportResult(OcrImportCoordinator.parsePages(recognition.pages, this.entries, rules));
     } catch (error) {
       if (requestId === this.ocrRequestId) {
         const businessError = error as BusinessError;
@@ -658,8 +682,11 @@ struct Index {
     this.ocrLoading = true;
     this.sharedImportError = '';
     try {
+      const context = this.getUIContext().getHostContext() as common.Context;
+      const rules = await loadOcrRules(context);
+      this.ocrRulesSnapshot = rules;
       const recognition = await OcrImporter.recognizeUris(this.sharedImportUris);
-      this.applyImportResult(OcrImportCoordinator.parsePages(recognition.pages, this.entries));
+      this.applyImportResult(OcrImportCoordinator.parsePages(recognition.pages, this.entries, rules));
     } catch (error) {
       const businessError = error as BusinessError;
       this.sharedImportError = '截图识别失败：' + businessError.message;
@@ -705,7 +732,8 @@ struct Index {
       return;
     }
     if (source !== undefined) {
-      const parsed = OcrImportCoordinator.parsePage(page.lines, source, this.entries, this.drafts, page.captureTime);
+      const parsed = OcrImportCoordinator.parsePage(
+        page.lines, source, this.entries, this.ocrRulesSnapshot, this.drafts, page.captureTime);
       this.drafts = this.drafts.concat(parsed);
       this.reviewMessage = parsed.length === 0 ?
         '所选来源下没有找到带明确日期的交易记录；请检查原文或跳过该截图。' : '';

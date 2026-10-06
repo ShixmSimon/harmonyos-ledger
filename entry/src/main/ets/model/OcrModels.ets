@@ -1,4 +1,4 @@
-import { DraftEntry } from './LedgerModels';
+import type { DraftEntry } from './LedgerModels';
 
 export interface OcrLine {
   text: string;

@@ -1,8 +1,10 @@
-import { DraftEntry, EntryDirection, EntrySource, ImportSource, LedgerEntry, makeId, parseAmountFen, parseDateTime } from '../model/LedgerModels';
-import { DraftValidationError, OcrLine, OcrRecognizedPage, OcrImportResult, UnclassifiedOcrPage } from '../model/OcrModels';
+import type { DraftEntry, EntryDirection, EntrySource, ImportSource, LedgerEntry } from '../model/LedgerModels';
+import { makeId, parseAmountFen, parseDateTime } from '../model/LedgerModels';
+import type { DraftValidationError, OcrLine, OcrRecognizedPage, OcrImportResult, UnclassifiedOcrPage } from '../model/OcrModels';
 import { IcbcParser } from './IcbcParser';
 import { OcrSourceDetector } from './OcrSourceDetector';
 import { ReceiptParser } from './ReceiptParser';
+import type { OcrRule } from './ocrRules/OcrRuleModels';
 
 export interface OcrDraftConfirmationPlan {
   additions: LedgerEntry[];
@@ -44,12 +46,12 @@ function entryWithCategory(entry: LedgerEntry, category: string): LedgerEntry {
 }
 
 export class OcrImportCoordinator {
-  static parsePages(pages: OcrRecognizedPage[], existing: LedgerEntry[]): OcrImportResult {
+  static parsePages(pages: OcrRecognizedPage[], existing: LedgerEntry[], rules: OcrRule[]): OcrImportResult {
     const drafts: DraftEntry[] = [];
     const rawPages: string[] = [];
     const unclassifiedPages: UnclassifiedOcrPage[] = [];
     pages.forEach((page: OcrRecognizedPage) => {
-      const source = OcrSourceDetector.detect(page.rawText);
+      const source = OcrSourceDetector.detect(page.rawText, rules);
       if (source === undefined) {
         if (page.rawText.indexOf('识别失败：') !== 0) {
           unclassifiedPages.push({
@@ -63,7 +65,7 @@ export class OcrImportCoordinator {
         }
         return;
       }
-      const parsed = OcrImportCoordinator.parsePage(page.lines, source, existing, drafts, page.captureTime);
+      const parsed = OcrImportCoordinator.parsePage(page.lines, source, existing, rules, drafts, page.captureTime);
       parsed.forEach((draft: DraftEntry) => {
         drafts.push(draft);
       });
@@ -80,13 +82,20 @@ export class OcrImportCoordinator {
     lines: OcrLine[],
     source: ImportSource,
     existing: LedgerEntry[],
+    rules: OcrRule[],
     priorDrafts: DraftEntry[] = [],
     captureTime?: number
   ): DraftEntry[] {
-    if (source === 'icbc') {
-      return IcbcParser.parse(lines, existing, priorDrafts, captureTime);
+    const candidates = rules.filter((rule: OcrRule) => rule.enabled && rule.source === source);
+    for (const rule of candidates) {
+      const drafts = rule.layoutStrategy === 'icbc-statement' ?
+        IcbcParser.parse(lines, rule, existing, priorDrafts, captureTime) :
+        ReceiptParser.parse(lines, source as EntrySource, rule, existing, priorDrafts, captureTime);
+      if (drafts.length > 0) {
+        return drafts;
+      }
     }
-    return ReceiptParser.parse(lines, source as EntrySource, existing, priorDrafts, captureTime);
+    return [];
   }
 
   static selectedCount(drafts: DraftEntry[]): number {
