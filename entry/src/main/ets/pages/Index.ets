@@ -33,6 +33,7 @@ import { indexStorage } from '../state/IndexStorage';
 import { SettingsView } from '../components/settings/SettingsView';
 import { NotificationSettingsView, PairedNotificationDevice } from '../components/settings/NotificationSettingsView';
 import { NotificationHistoryView } from './notifications/NotificationHistoryView';
+import { NotificationRuleSettingsView } from './notifications/NotificationRuleSettingsView';
 
 interface CsvImportDialogResponse {
   index: number;
@@ -49,7 +50,7 @@ struct Index {
   private ledgerRefreshRevision: number = 0;
   @State
   @Watch('onScreenChanged')
-  private screen: 'ledger' | 'editor' | 'statistics' | 'import' | 'settings' | 'notificationSettings' | 'notificationHistory' = 'ledger';
+  private screen: 'ledger' | 'editor' | 'statistics' | 'import' | 'settings' | 'notificationSettings' | 'notificationRules' | 'notificationHistory' = 'ledger';
   @State private drafts: DraftEntry[] = [];
   @State private unclassifiedPages: UnclassifiedOcrPage[] = [];
   @State private ocrRawText: string = '';
@@ -111,14 +112,14 @@ struct Index {
   }
 
   private onLedgerRefreshRevisionChanged(): void {
-    if (this.screen === 'settings' || this.screen === 'notificationSettings') {
+    if (this.screen === 'settings' || this.screen === 'notificationSettings' || this.screen === 'notificationRules') {
       void this.refreshNotificationProbe();
     }
     this.refreshEntriesForCurrentScreen();
   }
 
   private onScreenChanged(): void {
-    if (this.screen === 'settings' || this.screen === 'notificationSettings') {
+    if (this.screen === 'settings' || this.screen === 'notificationSettings' || this.screen === 'notificationRules') {
       void this.refreshNotificationProbe();
     }
     this.refreshEntriesForCurrentScreen();
@@ -126,7 +127,7 @@ struct Index {
 
   private refreshEntriesForCurrentScreen(): void {
     if (!this.ready || this.shareImportMode || this.screen === 'settings' ||
-      this.screen === 'notificationSettings' || this.screen === 'notificationHistory') {
+      this.screen === 'notificationSettings' || this.screen === 'notificationRules' || this.screen === 'notificationHistory') {
       return;
     }
     void this.reloadEntriesSafely();
@@ -176,6 +177,10 @@ struct Index {
       } else {
         this.screen = this.notificationHistoryReturnScreen;
       }
+      return true;
+    }
+    if (this.screen === 'notificationRules') {
+      this.screen = 'notificationSettings';
       return true;
     }
     if (this.screen === 'notificationSettings') {
@@ -282,6 +287,9 @@ struct Index {
             this.notificationHistoryReturnScreen = 'notificationSettings';
             this.screen = 'notificationHistory';
           },
+          onOpenRules: () => {
+            this.screen = 'notificationRules';
+          },
           onOpenPermission: () => {
             void this.openNotificationSubscriptionSettings();
           },
@@ -302,6 +310,12 @@ struct Index {
           },
           onToggleAdvancedHelp: () => {
             this.showNotificationAdvancedHelp = !this.showNotificationAdvancedHelp;
+          }
+        });
+      } else if (this.screen === 'notificationRules') {
+        NotificationRuleSettingsView({
+          onBack: () => {
+            this.screen = 'notificationSettings';
           }
         });
       } else if (this.screen === 'notificationHistory') {
@@ -1091,6 +1105,9 @@ struct Index {
   }
 
   private sourceLabel(source: EntrySource): string {
+    if (source === 'manual') {
+      return '手动';
+    }
     if (source === 'wechat') {
       return '微信支付';
     }
@@ -1103,7 +1120,7 @@ struct Index {
     if (source === 'citic') {
       return '中信银行';
     }
-    return '手动';
+    return source;
   }
 
   private openEditor(entry?: LedgerEntry, fromStatistics: boolean = false): void {

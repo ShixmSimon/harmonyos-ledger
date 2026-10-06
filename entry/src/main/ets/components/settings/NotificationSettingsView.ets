@@ -26,6 +26,7 @@ export struct NotificationSettingsView {
   onBack: () => void = () => {};
   onOpenPermission: () => void = () => {};
   onOpenHistory: () => void = () => {};
+  onOpenRules: () => void = () => {};
   onRefresh: () => void = () => {};
   onFindDevices: () => void = () => {};
   onSubscribeDevice: (device: PairedNotificationDevice) => void = (_device: PairedNotificationDevice) => {};
@@ -58,9 +59,29 @@ export struct NotificationSettingsView {
               .fontSize(17)
               .fontWeight(FontWeight.Bold)
               .fontColor('#172B4D');
-            Text('授权后，本机收到的工商银行和中信银行通知会在设备上解析。只识别正文包含明确金额与收支方向的交易；失败或撤销通知会忽略。')
+            Text('授权后，本机收到的工商银行、中信银行、支付宝和微信支付通知会在设备上解析。只识别包含明确金额与收支方向的交易；支付宝和微信支付的失败、撤销和退款通知会忽略。')
               .fontSize(13)
               .fontColor('#52606D');
+          }
+          .width('100%')
+          .alignItems(HorizontalAlign.Start)
+          .padding(16)
+          .backgroundColor('#FFFFFF')
+          .borderRadius(14);
+
+          Column({ space: 8 }) {
+            Text('自动入账识别规则')
+              .fontSize(17)
+              .fontWeight(FontWeight.Bold)
+              .fontColor('#172B4D');
+            Text('管理通知来源、正文正则和交易字段提取。')
+              .fontSize(13)
+              .fontColor('#52606D');
+            Button('配置识别规则')
+              .width('100%')
+              .backgroundColor('#E9F1FF')
+              .fontColor('#2457C5')
+              .onClick(() => this.onOpenRules());
           }
           .width('100%')
           .alignItems(HorizontalAlign.Start)

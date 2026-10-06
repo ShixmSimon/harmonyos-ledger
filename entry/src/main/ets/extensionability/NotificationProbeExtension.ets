@@ -3,6 +3,7 @@ import { NotificationSubscriberExtensionAbility, notificationExtensionSubscripti
 import { LedgerRepository } from '../data/LedgerRepository';
 import { NotificationArchiveRepository } from '../data/NotificationArchiveRepository';
 import { parseBankNotificationEntry } from '../services/BankNotificationParser';
+import { loadNotificationRules } from '../services/NotificationRuleStore';
 import { recordNotificationProbe } from '../services/NotificationProbeStore';
 
 const DOMAIN: number = 0x0000;
@@ -41,7 +42,8 @@ export default class NotificationProbeExtension extends NotificationSubscriberEx
     info: notificationExtensionSubscription.NotificationInfo,
     receivedAt: number
   ): Promise<void> {
-    const entry = parseBankNotificationEntry(info, receivedAt);
+    const rules = await loadNotificationRules(this.context);
+    const entry = parseBankNotificationEntry(info, receivedAt, rules);
     if (entry === undefined) {
       return;
     }
