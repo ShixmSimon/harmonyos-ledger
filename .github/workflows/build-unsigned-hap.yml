@@ -2,11 +2,8 @@ name: Build unsigned HarmonyOS HAP
 
 on:
   push:
-    branches:
-      - '**'
     tags:
       - 'v*'
-  workflow_dispatch:
 
 permissions:
   contents: read
