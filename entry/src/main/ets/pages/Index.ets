@@ -1325,7 +1325,7 @@ struct Index {
           { text: '导入 ' + preview.entries.length + ' 条', color: '#2457C5' }
         ]
       }, (error: BusinessError, response: CsvImportDialogResponse) => {
-        if (error !== null) {
+        if (error) {
           this.showToast('打开 CSV 导入预览失败：' + error.message);
           return;
         }
