@@ -28,7 +28,7 @@ import { CsvExporter } from '../services/CsvExporter';
 import { CsvImporter } from '../services/CsvImporter';
 import { OcrDraftConfirmationPlan, OcrImportCoordinator } from '../services/OcrImportCoordinator';
 import { OcrImportView } from './import/OcrImportView';
-import { DraftValidationError, OcrImportResult, UnclassifiedOcrPage } from '../model/OcrModels';
+import { DraftValidationError, OcrImportResult, OcrSourceOption, UnclassifiedOcrPage } from '../model/OcrModels';
 import {
   backNotificationRoute,
   initialMainTabNavigationState,
@@ -429,6 +429,7 @@ struct Index {
     OcrImportView({
       drafts: this.drafts,
       unclassifiedPages: this.unclassifiedPages,
+      sourceOptions: this.enabledOcrSourceOptions(),
       rawText: this.ocrRawText,
       loading: this.ocrLoading,
       errorMessage: this.ocrErrorMessage,
@@ -793,7 +794,7 @@ struct Index {
     }
     if (source !== undefined) {
       const parsed = OcrImportCoordinator.parsePage(
-        page.lines, source, this.entries, this.ocrRulesSnapshot, this.drafts, page.captureTime);
+        page.lines, source, this.entries, this.ocrRulesSnapshot, this.drafts, page.captureTime, page.imageWidth);
       this.drafts = this.drafts.concat(parsed);
       this.reviewMessage = parsed.length === 0 ?
         '所选来源下没有找到带明确日期的交易记录；请检查原文或跳过该截图。' : '';
@@ -1209,6 +1210,16 @@ struct Index {
       return '中信银行';
     }
     return source;
+  }
+
+  private enabledOcrSourceOptions(): OcrSourceOption[] {
+    const options: OcrSourceOption[] = [];
+    this.ocrRulesSnapshot.filter((rule: OcrRule) => rule.enabled).forEach((rule: OcrRule) => {
+      if (!options.some((option: OcrSourceOption) => option.id === rule.source)) {
+        options.push({ id: rule.source, name: rule.sourceName ?? rule.name });
+      }
+    });
+    return options;
   }
 
   private openEditor(entry?: LedgerEntry, fromStatistics: boolean = false): void {

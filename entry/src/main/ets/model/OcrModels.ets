@@ -15,6 +15,7 @@ export interface OcrRecognizedPage {
   lines: OcrLine[];
   rawText: string;
   captureTime?: number;
+  imageWidth?: number;
 }
 
 export interface OcrRecognitionResult {
@@ -25,6 +26,12 @@ export interface UnclassifiedOcrPage {
   pageNumber: number;
   lines: OcrLine[];
   captureTime?: number;
+  imageWidth?: number;
+}
+
+export interface OcrSourceOption {
+  id: string;
+  name: string;
 }
 
 export interface OcrImportResult {

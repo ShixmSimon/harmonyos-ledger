@@ -67,7 +67,9 @@ LedgerRepository 在新增、批量导入、编辑、删除和通知自动入账
 
 ### 可编辑识别规则
 
-OCR 规则与通知规则不存入账本或通知归档数据库，而是分别以版本化 JSON 存在 ArkData Preferences：`ocr_recognition_rules` 和 `notification_rules`。OCR 导入流程读取当前规则并将其交给来源检测和账单解析器；通知扩展在处理新通知时读取通知规则，再调用通知解析引擎。规则编辑不会改写已有账目或通知归档。
+OCR 规则与通知规则不存入账本或通知归档数据库，而是分别以版本化 JSON 存在 ArkData Preferences：`ocr_recognition_rules` 和 `notification_rules`。OCR 导入流程读取当前规则并交给来源检测和通用/兼容解析器；通知扩展在处理新通知时读取通知规则，再调用通知解析引擎。旧 OCR 和通知规则分别迁移到版本 2，保留已有解析配置。规则编辑不会改写已有账目或通知归档。
+
+规则导入使用独立的 `RuleImportEngine` 校验带版本号的精简 JSON。OCR 与通知适配器把描述编译成各自的运行时规则，并调用正式解析器本地预览样例。样例只在设置页面当前导入草稿中流转，不传给存储服务；只有用户确认后才追加运行时规则并写入 Preferences。提示词可复制到外部 AI，应用不发送网络请求。OCR 文字样例不包含图片坐标，不能验证列范围本身。
 
 ## 页面与服务流
 
@@ -76,6 +78,7 @@ OCR 规则与通知规则不存入账本或通知归档数据库，而是分别�
 - `Index.ets` 协调统计、手动编辑、OCR 复核和页签路由。通知历史作为“通知”页签的主页面展示。
 - LedgerStatistics.ets 对已加载的账目按本地日期和所选记账周期做纯计算；统计视图负责图表与排行展示。
 - OcrRuleStore.ets 和 NotificationRuleStore.ets 分别读取及校验偏好设置中的规则；OCR 规则供截图导入流程使用，通知规则由通知扩展用于后续自动记账。
+- RuleImportEngine.ets 校验 OCR/通知精简规则；对应导入适配器通过正式解析器本地试跑样例，设置页确认后只保存运行时规则。
 - CsvExporter.ets 通过系统文档保存选择器写出 UTF-8 CSV，默认基础文件名为“通知记账”并提供 `csv` 后缀选项；CsvImporter.ets 读取用户选择的 CSV 并生成导入预览。文件只在导入流程内读取，不长期保留。
 - ShareImportExtension 接收用户从其他应用明确分享过来的图片 URI；图片仍由 OCR 导入流程处理。
 - NotificationProbeExtension 将通知归档和自动记账排入独立队列。`BankNotificationParser.ets` 负责把系统通知转换为通用输入并调用 `NotificationRuleEngine.ets`；具体来源和正文正则来自可编辑规则，解析器不再维护银行专用正文正则。

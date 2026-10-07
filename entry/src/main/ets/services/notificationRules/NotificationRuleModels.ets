@@ -12,8 +12,9 @@ export interface NotificationRule {
   enabled: boolean;
   sourceKeywords: string[];
   bodyPattern: string;
-  amountGroup: number;
-  directionGroup: number;
+  semanticCaptures?: boolean;
+  amountGroup?: number;
+  directionGroup?: number;
   incomeText: string;
   expenseText: string;
   dateGroup?: number;
@@ -27,6 +28,14 @@ export interface NotificationRule {
   merchantPrefixToStrip: string;
   noteTemplate: string;
   entrySource?: string;
+}
+
+export interface NotificationSemanticCaptures {
+  amount?: number;
+  direction?: number;
+  date?: number;
+  merchant?: number;
+  category?: number;
 }
 
 export interface NotificationInput {
@@ -53,7 +62,7 @@ export interface ParsedNotificationEntry {
 }
 
 export interface NotificationRuleStore {
-  version: 1;
+  version: 1 | 2;
   rules: NotificationRule[];
   defaultRulesVersion?: number;
 }

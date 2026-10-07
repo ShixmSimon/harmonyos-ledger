@@ -208,7 +208,7 @@ test('default rule storage seeds only a missing value and preserves a saved empt
 
 test('corrupt or unsupported stored rules fail instead of silently restoring defaults', () => {
   assert.throws(() => decodeNotificationRuleStore('{'), Error);
-  assert.throws(() => decodeNotificationRuleStore(JSON.stringify({ version: 2, rules: [] })), Error);
+  assert.throws(() => decodeNotificationRuleStore(JSON.stringify({ version: 3, rules: [] })), Error);
   const incompleteRule = { ...createDefaultNotificationRules()[0] };
   delete incompleteRule.merchantPrefixToStrip;
   assert.throws(() => decodeNotificationRuleStore(JSON.stringify({ version: 1, rules: [incompleteRule] })), Error);
@@ -250,4 +250,101 @@ test('amount conversion retains yuan-to-fen decimal behavior', () => {
   assert.equal(parseAmountFen('¥1,234.56'), 123456);
   assert.equal(parseAmountFen('18.5'), 1850);
   assert.equal(parseAmountFen('bad'), undefined);
+});
+
+test('semantic captures parse named amount and direction without numeric group configuration', () => {
+  const rule = customRule({
+    semanticCaptures: true,
+    bodyPattern: '^(?<direction>收入|支出)\\s+(?<amount>[¥￥]?[\\d,.]+)元\\s+(?<merchant>.+)$',
+    amountGroup: undefined,
+    directionGroup: undefined,
+    merchantGroup: undefined,
+    noteTemplate: ''
+  });
+  const entry = parseNotificationEntry(input({
+    appName: 'MockPay',
+    body: '支出 12,345,678.90元 示例店'
+  }), [rule]);
+
+  assert.equal(entry?.amountFen, 1234567890);
+  assert.equal(entry?.direction, 'expense');
+  assert.equal(entry?.merchant, '示例店');
+});
+
+test('semantic captures may omit optional fields and then use configured defaults', () => {
+  const rule = customRule({
+    semanticCaptures: true,
+    bodyPattern: '^(?<direction>收入|支出)\\s+(?<amount>[\\d,.]+)元$',
+    amountGroup: undefined,
+    directionGroup: undefined,
+    dateGroup: undefined,
+    merchantGroup: undefined,
+    categoryGroup: undefined,
+    noteTemplate: ''
+  });
+  const entry = parseNotificationEntry(input({
+    appName: 'MockPay', body: '收入 1,031.10元'
+  }), [rule]);
+
+  assert.equal(entry?.amountFen, 103110);
+  assert.equal(entry?.direction, 'income');
+  assert.equal(entry?.merchant, '未知商户');
+  assert.equal(entry?.category, '其他');
+});
+
+test('semantic date captures keep strict calendar validation and the configured format', () => {
+  const rule = customRule({
+    semanticCaptures: true,
+    bodyPattern: '^(?<direction>收入|支出)\\s+(?<amount>[\\d,.]+)\\s+(?<date>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2})$',
+    amountGroup: undefined,
+    directionGroup: undefined,
+    dateGroup: undefined,
+    dateFormat: 'yyyy-MM-dd HH:mm',
+    dateStrategy: 'format',
+    noteTemplate: ''
+  });
+  const good = parseNotificationEntry(input({
+    appName: 'MockPay', body: '支出 18.50 2026-10-03 08:25'
+  }), [rule]);
+  const bad = parseNotificationEntry(input({
+    appName: 'MockPay', body: '支出 18.50 2026-02-30 08:25'
+  }), [rule]);
+
+  assert.equal(good?.happenedAt, new Date(2026, 9, 3, 8, 25).getTime());
+  assert.equal(bad, undefined);
+});
+
+test('semantic validation requires amount and direction and rejects unnamed, unknown, or duplicate captures', () => {
+  const base = customRule({ semanticCaptures: true, amountGroup: undefined, directionGroup: undefined, noteTemplate: '' });
+  assert.equal(validateNotificationRule({ ...base, bodyPattern: '(?<direction>收入|支出)\\d+' })?.field,
+    'bodyPattern');
+  assert.equal(validateNotificationRule({ ...base, bodyPattern: '(?<amount>\\d+)' })?.field, 'bodyPattern');
+  assert.equal(validateNotificationRule({ ...base, bodyPattern: '(收入|支出)(?<amount>\\d+)' })?.field,
+    'bodyPattern');
+  assert.equal(validateNotificationRule({ ...base, bodyPattern:
+    '(?<direction>收入|支出)(?<amount>\\d+)(?<amount>\\d+)' })?.field, 'bodyPattern');
+});
+
+test('version one notification rules migrate without changing their legacy numeric captures', () => {
+  const rule = customRule({ bodyPattern: '^REF:(\\w+):(收入|支出):([\\d.]+)$', amountGroup: 3, directionGroup: 2 });
+  const stored = decodeNotificationRuleStore(JSON.stringify({
+    version: 1, defaultRulesVersion: 1, rules: [rule]
+  }));
+
+  assert.equal(stored.migrated, true);
+  assert.equal(stored.rules[0].bodyPattern, rule.bodyPattern);
+  assert.equal(stored.rules[0].amountGroup, 3);
+  assert.equal(stored.rules[0].directionGroup, 2);
+  assert.deepEqual(decodeNotificationRuleStore(JSON.stringify({ version: 2, rules: [] })).rules, []);
+});
+
+test('version one migration still upgrades the exact historical ICBC default pattern', () => {
+  const oldRule = createDefaultNotificationRules()[0];
+  oldRule.bodyPattern = String.raw`尾号\s*(\d{4})\s*卡\s*(\d{1,2}月\d{1,2}日\s*\d{1,2}:\d{2})\s*(支出|收入)\s*[（(]\s*([^）)]*?)\s*[）)]\s*(\d+(?:[.,]\d{1,2})?)\s*元`;
+  const stored = decodeNotificationRuleStore(JSON.stringify({
+    version: 1, defaultRulesVersion: 1, rules: [oldRule]
+  }));
+
+  assert.equal(stored.migrated, true);
+  assert.equal(stored.rules[0].bodyPattern, createDefaultNotificationRules()[0].bodyPattern);
 });

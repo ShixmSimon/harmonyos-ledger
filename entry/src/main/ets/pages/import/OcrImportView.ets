@@ -1,5 +1,5 @@
 import { DraftEntry, EntryDirection, EntrySource, ImportSource } from '../../model/LedgerModels';
-import { DraftValidationError, UnclassifiedOcrPage } from '../../model/OcrModels';
+import { DraftValidationError, OcrSourceOption, UnclassifiedOcrPage } from '../../model/OcrModels';
 
 type DraftTextField = 'merchant' | 'dateText' | 'amountText' | 'category';
 
@@ -107,6 +107,7 @@ struct DraftCard {
 export struct OcrImportView {
   @Prop drafts: DraftEntry[] = [];
   @Prop unclassifiedPages: UnclassifiedOcrPage[] = [];
+  @Prop sourceOptions: OcrSourceOption[] = [];
   @Prop rawText: string = '';
   @Prop loading: boolean = false;
   @Prop errorMessage: string = '';
@@ -265,18 +266,14 @@ export struct OcrImportView {
         .fontSize(14)
         .fontWeight(FontWeight.Bold)
         .fontColor('#172B4D');
-      Row({ space: 8 }) {
-        Button('微信')
-          .layoutWeight(1)
-          .onClick(() => this.onResolvePage(page.pageNumber, 'wechat'));
-        Button('支付宝')
-          .layoutWeight(1)
-          .onClick(() => this.onResolvePage(page.pageNumber, 'alipay'));
-        Button('工行')
-          .layoutWeight(1)
-          .onClick(() => this.onResolvePage(page.pageNumber, 'icbc'));
+      Column({ space: 8 }) {
+        ForEach(this.sourceOptions, (source: OcrSourceOption) => {
+          Button(source.name)
+            .width('100%')
+            .onClick(() => this.onResolvePage(page.pageNumber, source.id));
+        }, (source: OcrSourceOption) => source.id);
         Button('跳过')
-          .layoutWeight(1)
+          .width('100%')
           .onClick(() => this.onResolvePage(page.pageNumber));
       }
       .width('100%');

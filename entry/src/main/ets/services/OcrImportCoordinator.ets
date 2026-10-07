@@ -2,6 +2,7 @@ import type { DraftEntry, EntryDirection, EntrySource, ImportSource, LedgerEntry
 import { makeId, parseAmountFen, parseDateTime } from '../model/LedgerModels';
 import type { DraftValidationError, OcrLine, OcrRecognizedPage, OcrImportResult, UnclassifiedOcrPage } from '../model/OcrModels';
 import { IcbcParser } from './IcbcParser';
+import { GenericOcrParser } from './GenericOcrParser';
 import { OcrSourceDetector } from './OcrSourceDetector';
 import { ReceiptParser } from './ReceiptParser';
 import type { OcrRule } from './ocrRules/OcrRuleModels';
@@ -15,14 +16,8 @@ export interface OcrDraftConfirmationPlan {
   firstSelectedAt?: number;
 }
 
-function sourceLabel(source: ImportSource): string {
-  if (source === 'wechat') {
-    return '微信支付';
-  }
-  if (source === 'alipay') {
-    return '支付宝';
-  }
-  return '工商银行';
+function sourceLabel(rule: OcrRule): string {
+  return rule.sourceName ?? rule.name;
 }
 
 function sameTimedAmount(entry: LedgerEntry, happenedAt: number, amountFen: number, hasTime: boolean,
@@ -51,13 +46,14 @@ export class OcrImportCoordinator {
     const rawPages: string[] = [];
     const unclassifiedPages: UnclassifiedOcrPage[] = [];
     pages.forEach((page: OcrRecognizedPage) => {
-      const source = OcrSourceDetector.detect(page.rawText, rules);
-      if (source === undefined) {
+      const selectedRule = OcrSourceDetector.detect(page.rawText, rules);
+      if (selectedRule === undefined) {
         if (page.rawText.indexOf('识别失败：') !== 0) {
           unclassifiedPages.push({
             pageNumber: page.pageNumber,
             lines: page.lines,
-            captureTime: page.captureTime
+            captureTime: page.captureTime,
+            imageWidth: page.imageWidth
           });
           rawPages.push('截图 ' + page.pageNumber + '（来源待确认）\n' + page.rawText);
         } else {
@@ -65,11 +61,12 @@ export class OcrImportCoordinator {
         }
         return;
       }
-      const parsed = OcrImportCoordinator.parsePage(page.lines, source, existing, rules, drafts, page.captureTime);
+      const parsed = OcrImportCoordinator.parsePage(page.lines, selectedRule.source, existing, rules, drafts,
+        page.captureTime, page.imageWidth);
       parsed.forEach((draft: DraftEntry) => {
         drafts.push(draft);
       });
-      rawPages.push('截图 ' + page.pageNumber + '（识别来源：' + sourceLabel(source) + '）\n' + page.rawText);
+      rawPages.push('截图 ' + page.pageNumber + '（识别来源：' + sourceLabel(selectedRule) + '）\n' + page.rawText);
     });
     return {
       drafts: drafts,
@@ -84,13 +81,16 @@ export class OcrImportCoordinator {
     existing: LedgerEntry[],
     rules: OcrRule[],
     priorDrafts: DraftEntry[] = [],
-    captureTime?: number
+    captureTime?: number,
+    imageWidth?: number
   ): DraftEntry[] {
     const candidates = rules.filter((rule: OcrRule) => rule.enabled && rule.source === source);
     for (const rule of candidates) {
       const drafts = rule.layoutStrategy === 'icbc-statement' ?
         IcbcParser.parse(lines, rule, existing, priorDrafts, captureTime) :
-        ReceiptParser.parse(lines, source as EntrySource, rule, existing, priorDrafts, captureTime);
+        rule.layoutStrategy === 'generic' ?
+          GenericOcrParser.parse(lines, source as EntrySource, rule, existing, priorDrafts, captureTime, imageWidth) :
+          ReceiptParser.parse(lines, source as EntrySource, rule, existing, priorDrafts, captureTime);
       if (drafts.length > 0) {
         return drafts;
       }

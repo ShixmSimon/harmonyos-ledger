@@ -34,8 +34,7 @@ export struct NotificationRuleEditor {
     enabled: true,
     sourceKeywords: [],
     bodyPattern: '',
-    amountGroup: 1,
-    directionGroup: 2,
+    semanticCaptures: true,
     incomeText: '收入',
     expenseText: '支出',
     dateFormat: '',
@@ -52,8 +51,7 @@ export struct NotificationRuleEditor {
     enabled: true,
     sourceKeywords: [],
     bodyPattern: '',
-    amountGroup: 1,
-    directionGroup: 2,
+    semanticCaptures: true,
     incomeText: '收入',
     expenseText: '支出',
     dateFormat: '',
@@ -98,7 +96,7 @@ export struct NotificationRuleEditor {
         }
         .width('100%');
 
-        Text('来源、正文正则和捕获组共同决定规则。正则中的第一个捕获组编号为 1；(?:...) 非捕获组不会占用编号。')
+        Text('来源关键词、正文正则和方向词共同决定规则。新规则使用 amount、direction 等命名字段；旧规则仍保留数字捕获兼容编辑。')
           .fontSize(12)
           .fontColor('#52606D')
           .width('100%');
@@ -122,9 +120,15 @@ export struct NotificationRuleEditor {
           RuleTextField({
             label: '通知正文正则',
             value: this.draft.bodyPattern,
-            placeholder: '例如：到账(\\d+(?:\\.\\d{1,2})?)元',
+            placeholder: this.draft.semanticCaptures ?
+              '(?<direction>收入|支出).*?(?<amount>[\\d,.]+)元' : '兼容旧规则的正文正则',
             onChange: (value: string) => this.updateRule((draft: NotificationRule) => draft.bodyPattern = value)
           });
+          Button(this.draft.semanticCaptures ? '切换到数字捕获兼容' : '改用语义命名捕获')
+            .backgroundColor('#F1F3F5')
+            .fontColor('#344563')
+            .onClick(() => this.updateRule((draft: NotificationRule) =>
+              draft.semanticCaptures = !draft.semanticCaptures));
         }
         .width('100%')
         .padding(14)
@@ -132,20 +136,27 @@ export struct NotificationRuleEditor {
         .borderRadius(14);
 
         Column({ space: 12 }) {
-          Text('交易字段捕获组')
+          Text(this.draft.semanticCaptures ? '交易语义字段' : '旧版数字捕获组')
             .fontSize(16)
             .fontWeight(FontWeight.Bold)
             .fontColor('#172B4D');
-          RuleTextField({
-            label: '金额组编号（必填）',
-            value: String(this.draft.amountGroup),
-            onChange: (value: string) => this.updateRule((draft: NotificationRule) => draft.amountGroup = Number(value))
-          });
-          RuleTextField({
-            label: '方向组编号（必填）',
-            value: String(this.draft.directionGroup),
-            onChange: (value: string) => this.updateRule((draft: NotificationRule) => draft.directionGroup = Number(value))
-          });
+          if (this.draft.semanticCaptures) {
+            Text('正文正则必须包含 (?<amount>...) 和 (?<direction>...)。可选字段使用 date、merchant、category 命名。')
+              .fontSize(12)
+              .fontColor('#52606D')
+              .width('100%');
+          } else {
+            RuleTextField({
+              label: '金额组编号（必填）',
+              value: this.groupText(this.draft.amountGroup),
+              onChange: (value: string) => this.updateRule((draft: NotificationRule) => draft.amountGroup = Number(value))
+            });
+            RuleTextField({
+              label: '方向组编号（必填）',
+              value: this.groupText(this.draft.directionGroup),
+              onChange: (value: string) => this.updateRule((draft: NotificationRule) => draft.directionGroup = Number(value))
+            });
+          }
           Column({ space: 8 }) {
             RuleTextField({
               label: '收入通知关键词（多个用 | 分隔）',
@@ -159,16 +170,22 @@ export struct NotificationRuleEditor {
             });
           }
           .width('100%');
-          Text('方向捕获组需与对应列表中的某个关键词完全一致；旧规则中的单个方向文字仍可用。')
+          Text('方向字段需与对应列表中的某个关键词完全一致。')
             .fontSize(12)
             .fontColor('#52606D')
             .width('100%');
           if (this.draft.dateStrategy !== 'delivery-time') {
-            RuleTextField({
-              label: '日期组编号',
-              value: this.draft.dateGroup === undefined ? '' : String(this.draft.dateGroup),
-              onChange: (value: string) => this.updateDateGroup(value)
-            });
+            if (!this.draft.semanticCaptures) {
+              RuleTextField({
+                label: '日期组编号',
+                value: this.draft.dateGroup === undefined ? '' : String(this.draft.dateGroup),
+                onChange: (value: string) => this.updateDateGroup(value)
+              });
+            } else {
+              Text('正文正则需包含命名捕获 date。')
+                .fontSize(12)
+                .fontColor('#52606D');
+            }
             RuleTextField({
               label: '日期格式',
               value: this.draft.dateFormat,
@@ -201,11 +218,13 @@ export struct NotificationRuleEditor {
             value: this.draft.defaultMerchant,
             onChange: (value: string) => this.updateRule((draft: NotificationRule) => draft.defaultMerchant = value)
           });
-          RuleTextField({
-            label: '商户捕获组（可选）',
-            value: this.groupText(this.draft.merchantGroup),
-            onChange: (value: string) => this.updateOptionalGroup(value, 'merchant')
-          });
+          if (!this.draft.semanticCaptures) {
+            RuleTextField({
+              label: '商户捕获组（可选）',
+              value: this.groupText(this.draft.merchantGroup),
+              onChange: (value: string) => this.updateOptionalGroup(value, 'merchant')
+            });
+          }
           RuleTextField({
             label: '移除商户前缀',
             value: this.draft.merchantPrefixToStrip,
@@ -216,11 +235,13 @@ export struct NotificationRuleEditor {
             value: this.draft.defaultCategory,
             onChange: (value: string) => this.updateRule((draft: NotificationRule) => draft.defaultCategory = value)
           });
-          RuleTextField({
-            label: '分类捕获组（可选）',
-            value: this.groupText(this.draft.categoryGroup),
-            onChange: (value: string) => this.updateOptionalGroup(value, 'category')
-          });
+          if (!this.draft.semanticCaptures) {
+            RuleTextField({
+              label: '分类捕获组（可选）',
+              value: this.groupText(this.draft.categoryGroup),
+              onChange: (value: string) => this.updateOptionalGroup(value, 'category')
+            });
+          }
           Text('有序分类映射：先匹配的规则优先；没有命中时使用默认分类。')
             .fontSize(12)
             .fontColor('#52606D');
@@ -242,9 +263,9 @@ export struct NotificationRuleEditor {
 
         Column({ space: 12 }) {
           RuleTextField({
-            label: '备注模板（可引用 {{1}}、{{2}} 等捕获组）',
+            label: this.draft.semanticCaptures ? '备注' : '备注模板（可引用 {{1}}、{{2}} 等捕获组）',
             value: this.draft.noteTemplate,
-            placeholder: '例如：尾号{{1}}账户通知',
+            placeholder: this.draft.semanticCaptures ? '语义规则不引用数字捕获组' : '例如：尾号{{1}}账户通知',
             onChange: (value: string) => this.updateRule((draft: NotificationRule) => draft.noteTemplate = value)
           });
         }
@@ -365,6 +386,7 @@ export struct NotificationRuleEditor {
       enabled: rule.enabled,
       sourceKeywords: rule.sourceKeywords.slice(),
       bodyPattern: rule.bodyPattern,
+      semanticCaptures: rule.semanticCaptures,
       amountGroup: rule.amountGroup,
       directionGroup: rule.directionGroup,
       incomeText: rule.incomeText,

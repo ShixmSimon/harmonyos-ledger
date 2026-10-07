@@ -13,6 +13,7 @@ const OCR_SLICE_OVERLAP = 256;
 interface OcrImageRecognition {
   lines: OcrLine[];
   rawText: string;
+  imageWidth: number;
 }
 
 function toOcrText(result: textRecognition.TextRecognitionResult): string {
@@ -94,7 +95,7 @@ async function recognizeImage(imageSource: image.ImageSource): Promise<OcrImageR
     const pixelMap = await imageSource.createPixelMap();
     try {
       const recognition = await textRecognition.recognizeText({ pixelMap: pixelMap });
-      return { lines: toOcrLines(recognition), rawText: toOcrText(recognition) };
+      return { lines: toOcrLines(recognition), rawText: toOcrText(recognition), imageWidth: imageWidth };
     } finally {
       await pixelMap.release();
     }
@@ -129,7 +130,11 @@ async function recognizeImage(imageSource: image.ImageSource): Promise<OcrImageR
     }
     previousSliceBottom = sliceTop + currentSliceHeight;
   }
-  return { lines: mergedLines, rawText: mergedLines.map((line: OcrLine) => line.text).join('\n') };
+  return {
+    lines: mergedLines,
+    rawText: mergedLines.map((line: OcrLine) => line.text).join('\n'),
+    imageWidth: imageWidth
+  };
 }
 
 async function imageCaptureTime(file: fileIo.File): Promise<number | undefined> {
@@ -182,7 +187,8 @@ export class OcrImporter {
             pageNumber: imageIndex + 1,
             lines: recognition.lines,
             rawText: recognition.rawText,
-            captureTime: capturedAt
+            captureTime: capturedAt,
+            imageWidth: recognition.imageWidth
           });
           succeeded++;
         } catch (error) {

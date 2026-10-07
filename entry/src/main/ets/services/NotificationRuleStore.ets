@@ -19,7 +19,7 @@ export async function loadNotificationRules(context: common.Context): Promise<No
   }
   const state = decodeNotificationRuleStore(savedValue);
   if (state.persistDefaults || state.migrated === true) {
-    const serialized: NotificationRuleStore = { version: 1, defaultRulesVersion: 1, rules: state.rules };
+    const serialized: NotificationRuleStore = { version: 2, defaultRulesVersion: 1, rules: state.rules };
     store.putSync(RULES_KEY, JSON.stringify(serialized));
     await store.flush();
   }
@@ -37,7 +37,7 @@ export async function saveNotificationRules(context: common.Context, rules: Noti
     }
   }
   const store = await preferences.getPreferences(context, PREFERENCES_NAME);
-  const serialized: NotificationRuleStore = { version: 1, defaultRulesVersion: 1, rules: rules };
+  const serialized: NotificationRuleStore = { version: 2, defaultRulesVersion: 1, rules: rules };
   store.putSync(RULES_KEY, JSON.stringify(serialized));
   await store.flush();
 }

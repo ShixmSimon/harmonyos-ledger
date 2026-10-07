@@ -1,6 +1,6 @@
 export type EntryDirection = 'income' | 'expense';
 
-export type ImportSource = 'wechat' | 'alipay' | 'icbc';
+export type ImportSource = string;
 export type EntrySource = string;
 
 export { parseAmountFen } from '../services/notificationRules/AmountParser';

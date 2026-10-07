@@ -1,10 +1,10 @@
 import type { ImportSource } from '../../model/LedgerModels';
 import type {
   OcrCategoryMapping,
+  OcrColumnRange,
   OcrPattern,
   OcrRule,
   OcrRuleLoadResult,
-  OcrRuleStore,
   OcrRuleValidationIssue,
   OcrSourceMatcher
 } from './OcrRuleModels';
@@ -27,22 +27,22 @@ const ALIPAY_CATEGORIES = [
 function sourceMatchers(source: ImportSource): OcrSourceMatcher[] {
   if (source === 'wechat') {
     return [
-      { pattern: '微信支付|微信账单|微信钱包', weight: 6 },
-      { pattern: '全部账单|收支统计|查找交易', weight: 2 },
-      { pattern: '(?=[\\s\\S]*全部账单)(?=[\\s\\S]*收支统计)(?=[\\s\\S]*查找交易)', weight: 4 }
+      { pattern: '微信支付|微信账单|微信钱包' },
+      { pattern: '全部账单|收支统计|查找交易' },
+      { pattern: '(?=[\\s\\S]*全部账单)(?=[\\s\\S]*收支统计)(?=[\\s\\S]*查找交易)' }
     ];
   }
   if (source === 'alipay') {
     return [
-      { pattern: '支付宝', weight: 7 },
-      { pattern: '搜索交易记录', weight: 5 },
-      { pattern: '芝麻|花呗|余额宝', weight: 2 }
+      { pattern: '支付宝' },
+      { pattern: '搜索交易记录' },
+      { pattern: '芝麻|花呗|余额宝' }
     ];
   }
   return [
-    { pattern: '中国工商银行', weight: 7 },
-    { pattern: '工商银行|工银借记卡|工银信用卡', weight: 5 },
-    { pattern: '当页汇总笔数|人民币余额|借记卡\\(i类\\)', weight: 3 }
+    { pattern: '中国工商银行' },
+    { pattern: '工商银行|工银借记卡|工银信用卡' },
+    { pattern: '当页汇总笔数|人民币余额|借记卡\\(i类\\)' }
   ];
 }
 
@@ -55,7 +55,7 @@ function commonRule(
   id: string,
   name: string,
   source: ImportSource,
-  layoutStrategy: 'receipt-list' | 'icbc-statement',
+  layoutStrategy: 'receipt-list' | 'icbc-statement' | 'generic',
   amountPattern: string,
   datePattern: string,
   incomeKeywords: string[],
@@ -69,10 +69,10 @@ function commonRule(
     name: name,
     enabled: true,
     source: source,
+    sourceName: source === 'wechat' ? '微信支付' : source === 'alipay' ? '支付宝' : '工商银行',
     layoutStrategy: layoutStrategy,
+    record: layoutStrategy === 'generic' ? { mode: 'row' } : undefined,
     sourceMatchers: sourceMatchers(source),
-    minimumScore: 4,
-    scoreMargin: 2,
     amountPattern: { pattern: amountPattern, groupIndex: 1 },
     datePattern: { pattern: datePattern, groupIndex: 1 },
     timePattern: { pattern: TIME_PATTERN, groupIndex: 1 },
@@ -90,7 +90,7 @@ function commonRule(
 
 export function createDefaultOcrRules(): OcrRule[] {
   const wechat = commonRule(
-    'wechat-default', '微信账单', 'wechat', 'receipt-list', RECEIPT_AMOUNT_PATTERN, RECEIPT_DATE_PATTERN,
+    'wechat-default', '微信账单', 'wechat', 'generic', RECEIPT_AMOUNT_PATTERN, RECEIPT_DATE_PATTERN,
     ['收入', '收款', '入账'], ['支出', '付款', '消费'],
     ['已关闭', '已取消', '支付失败', '交易失败', '已撤销', '交易关闭'],
     ['退款', '退回', '已退'],
@@ -98,7 +98,7 @@ export function createDefaultOcrRules(): OcrRule[] {
       '收入.*支出', '支出.*收入', '^\\s*(收入|支出)\\s*[¥￥]?\\s*\\d+(?:[,.]\\d{3})*(?:[,.]\\d{1,2})?\\s*$']
   );
   const alipay = commonRule(
-    'alipay-default', '支付宝账单', 'alipay', 'receipt-list', RECEIPT_AMOUNT_PATTERN, RECEIPT_DATE_PATTERN,
+    'alipay-default', '支付宝账单', 'alipay', 'generic', RECEIPT_AMOUNT_PATTERN, RECEIPT_DATE_PATTERN,
     ['收入', '收款', '入账'], ['支出', '付款', '消费'],
     ['已关闭', '已取消', '支付失败', '交易失败', '已撤销', '交易关闭'],
     ['退款', '退回', '已退'],
@@ -207,16 +207,20 @@ export function validateOcrRule(rule: OcrRule): OcrRuleValidationIssue | undefin
   if (typeof rule.enabled !== 'boolean') {
     return { field: 'enabled', message: '启用状态无效' };
   }
-  if (rule.source !== 'wechat' && rule.source !== 'alipay' && rule.source !== 'icbc') {
+  if (typeof rule.source !== 'string' || rule.source.trim().length === 0) {
     return { field: 'source', message: '账单来源无效' };
   }
-  if (rule.layoutStrategy !== 'receipt-list' && rule.layoutStrategy !== 'icbc-statement') {
+  if (typeof rule.sourceName !== 'string' || rule.sourceName.trim().length === 0) {
+    return { field: 'sourceName', message: '来源名称无效' };
+  }
+  if (rule.layoutStrategy !== 'receipt-list' && rule.layoutStrategy !== 'icbc-statement' &&
+    rule.layoutStrategy !== 'generic') {
     return { field: 'layoutStrategy', message: '布局策略无效' };
   }
-  if (!Number.isFinite(rule.minimumScore) || rule.minimumScore <= 0) {
+  if (rule.minimumScore !== undefined && (!Number.isFinite(rule.minimumScore) || rule.minimumScore <= 0)) {
     return { field: 'minimumScore', message: '最低来源分必须大于 0' };
   }
-  if (!Number.isFinite(rule.scoreMargin) || rule.scoreMargin < 0) {
+  if (rule.scoreMargin !== undefined && (!Number.isFinite(rule.scoreMargin) || rule.scoreMargin < 0)) {
     return { field: 'scoreMargin', message: '来源分差不能小于 0' };
   }
   if (!Array.isArray(rule.sourceMatchers) || rule.sourceMatchers.length === 0) {
@@ -224,8 +228,8 @@ export function validateOcrRule(rule: OcrRule): OcrRuleValidationIssue | undefin
   }
   for (const matcher of rule.sourceMatchers) {
     if (typeof matcher.pattern !== 'string' || matcher.pattern.length === 0 ||
-      !Number.isFinite(matcher.weight) || matcher.weight <= 0) {
-      return { field: 'sourceMatchers', message: '来源表达式和正权重必填' };
+      (matcher.weight !== undefined && (!Number.isFinite(matcher.weight) || matcher.weight <= 0))) {
+      return { field: 'sourceMatchers', message: '来源正则表达式无效' };
     }
     try {
       new RegExp(matcher.pattern);
@@ -253,6 +257,44 @@ export function validateOcrRule(rule: OcrRule): OcrRuleValidationIssue | undefin
     const issue = validatePattern(item[0], item[1], false);
     if (issue !== undefined) {
       return issue;
+    }
+  }
+  if (rule.layoutStrategy === 'generic') {
+    if (rule.record === undefined || (rule.record.mode !== 'row' && rule.record.mode !== 'anchor')) {
+      return { field: 'record', message: '通用版式必须选择 row 或 anchor 记录模式' };
+    }
+    if (rule.record.mode === 'anchor') {
+      if (typeof rule.record.anchorPattern !== 'string' || rule.record.anchorPattern.length === 0) {
+        return { field: 'record.anchorPattern', message: '锚点模式必须填写起始表达式' };
+      }
+      try {
+        new RegExp(rule.record.anchorPattern);
+      } catch (_error) {
+        return { field: 'record.anchorPattern', message: '锚点正则表达式无效' };
+      }
+    }
+    const genericPatterns: Array<[OcrPattern | undefined, string]> = [
+      [rule.amountPattern, 'amountPattern'], [rule.datePattern, 'datePattern'], [rule.timePattern, 'timePattern'],
+      [rule.directionPattern, 'directionPattern'], [rule.merchantPattern, 'merchantPattern'],
+      [rule.categoryPattern, 'categoryPattern']
+    ];
+    for (const item of genericPatterns) {
+      if (item[0] !== undefined && item[0].groupIndex !== 1) {
+        return { field: item[1], message: '通用规则固定使用第一个捕获组' };
+      }
+    }
+    if (rule.columns !== undefined) {
+      const ranges: Array<[string, OcrColumnRange | undefined]> = [
+        ['amount', rule.columns.amount], ['date', rule.columns.date], ['time', rule.columns.time],
+        ['direction', rule.columns.direction], ['merchant', rule.columns.merchant], ['category', rule.columns.category]
+      ];
+      for (const item of ranges) {
+        const range = item[1];
+        if (range !== undefined && (!Number.isFinite(range.left) || !Number.isFinite(range.right) ||
+          range.left < 0 || range.right > 1 || range.left >= range.right)) {
+          return { field: 'columns.' + item[0], message: '列范围必须满足 0 ≤ left < right ≤ 1' };
+        }
+      }
     }
   }
   if (typeof rule.dateFormat !== 'string' || rule.dateFormat.trim().length === 0) {
@@ -298,13 +340,15 @@ export function validateOcrRule(rule: OcrRule): OcrRuleValidationIssue | undefin
 }
 
 function scoreRule(text: string, rule: OcrRule): number {
-  let score = 0;
+  let matches = 0;
+  const normalized = text.replace(/\s/g, '').toLowerCase();
   for (const matcher of rule.sourceMatchers) {
-    if (new RegExp(matcher.pattern, 'i').test(text)) {
-      score += matcher.weight;
+    const expression = new RegExp(matcher.pattern, 'i');
+    if (expression.test(text) || expression.test(normalized)) {
+      matches++;
     }
   }
-  return score;
+  return matches;
 }
 
 interface ScoredRule {
@@ -327,20 +371,19 @@ function sourceWinners(text: string, rules: OcrRule[]): ScoredRule[] {
       current.score = score;
     }
   }
-  return winners;
+  return winners.filter((candidate: ScoredRule) => candidate.score > 0);
 }
 
 export function selectOcrRule(text: string, rules: OcrRule[], selectedSource?: ImportSource): OcrRule | undefined {
-  const normalized = text.replace(/\s/g, '').toLowerCase();
   if (selectedSource !== undefined) {
     const candidates = rules.filter((rule: OcrRule) => rule.enabled && rule.source === selectedSource);
     if (candidates.length === 0) {
       return undefined;
     }
     let best = candidates[0];
-    let bestScore = scoreRule(normalized, best);
+    let bestScore = scoreRule(text, best);
     for (let index = 1; index < candidates.length; index++) {
-      const score = scoreRule(normalized, candidates[index]);
+      const score = scoreRule(text, candidates[index]);
       if (score > bestScore) {
         best = candidates[index];
         bestScore = score;
@@ -348,21 +391,18 @@ export function selectOcrRule(text: string, rules: OcrRule[], selectedSource?: I
     }
     return best;
   }
-  const candidates = sourceWinners(normalized, rules);
+  const candidates = sourceWinners(text, rules);
   let best: ScoredRule | undefined = undefined;
-  let secondScore = 0;
+  let matchingSources = 0;
   for (const candidate of candidates) {
     if (best === undefined || candidate.score > best.score) {
-      if (best !== undefined) {
-        secondScore = best.score;
-      }
       best = candidate;
-    } else if (candidate.score > secondScore) {
-      secondScore = candidate.score;
+      matchingSources = 1;
+    } else if (candidate.score === best.score) {
+      matchingSources++;
     }
   }
-  if (best === undefined || best.score < best.rule.minimumScore ||
-    best.score === secondScore || best.score - secondScore < best.rule.scoreMargin) {
+  if (best === undefined || best.score === 0 || matchingSources !== 1) {
     return undefined;
   }
   return best.rule;
@@ -485,16 +525,32 @@ export function decodeOcrRuleStore(value: string | undefined): OcrRuleLoadResult
   if (!(stored instanceof Object) || Array.isArray(stored)) {
     throw new Error('OCR 识别规则数据版本或内容无效');
   }
-  const store = stored as OcrRuleStore;
-  if (store.version !== 1 || !Array.isArray(store.rules)) {
+  const record = stored as Record<string, Object>;
+  const version = record['version'];
+  const rawRules = record['rules'];
+  if ((version !== 1 && version !== 2) || !Array.isArray(rawRules)) {
     throw new Error('OCR 识别规则数据版本或内容无效');
   }
-  const rules = store.rules;
-  for (const rule of rules) {
+  const legacy = version === 1;
+  const rules: OcrRule[] = [];
+  for (const value of rawRules as Object[]) {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error('已保存的 OCR 识别规则无效');
+    }
+    const storedRule = value as OcrRule;
+    const rule: OcrRule = storedRule;
+    if (legacy && (typeof rule.sourceName !== 'string' || rule.sourceName.trim().length === 0)) {
+      rule.sourceName = rule.source === 'wechat' ? '微信支付' :
+        rule.source === 'alipay' ? '支付宝' : rule.source === 'icbc' ? '工商银行' : rule.name;
+    }
     const issue = validateOcrRule(rule);
     if (issue !== undefined) {
       throw new Error('已保存的 OCR 识别规则无效：' + issue.message);
     }
+    if (!legacy && (typeof rule.sourceName !== 'string' || rule.sourceName.trim().length === 0)) {
+      throw new Error('已保存的 OCR 识别规则无效：来源名称必填');
+    }
+    rules.push(rule);
   }
-  return { rules: rules, persistDefaults: false };
+  return { rules: rules, persistDefaults: false, migrated: legacy };
 }

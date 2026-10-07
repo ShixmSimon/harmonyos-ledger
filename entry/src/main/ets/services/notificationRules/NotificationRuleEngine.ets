@@ -6,6 +6,7 @@ import type {
   NotificationRule,
   NotificationRuleLoadResult,
   NotificationRuleStore,
+  NotificationSemanticCaptures,
   ParsedNotificationEntry,
   RuleValidationIssue
 } from './NotificationRuleModels';
@@ -173,6 +174,106 @@ function countCaptureGroups(pattern: string): number {
   return count;
 }
 
+const SEMANTIC_CAPTURE_NAMES = ['amount', 'direction', 'date', 'merchant', 'category'];
+
+interface CompiledNotificationPattern {
+  expression: RegExp;
+  captureCount: number;
+  captures: NotificationSemanticCaptures;
+  issue?: string;
+}
+
+function putSemanticCapture(captures: NotificationSemanticCaptures, name: string, index: number): boolean {
+  if (name === 'amount') {
+    if (captures.amount !== undefined) { return false; }
+    captures.amount = index;
+  } else if (name === 'direction') {
+    if (captures.direction !== undefined) { return false; }
+    captures.direction = index;
+  } else if (name === 'date') {
+    if (captures.date !== undefined) { return false; }
+    captures.date = index;
+  } else if (name === 'merchant') {
+    if (captures.merchant !== undefined) { return false; }
+    captures.merchant = index;
+  } else if (name === 'category') {
+    if (captures.category !== undefined) { return false; }
+    captures.category = index;
+  } else {
+    return false;
+  }
+  return true;
+}
+
+function compileSemanticPattern(pattern: string): CompiledNotificationPattern | undefined {
+  let translated = '';
+  let escaped = false;
+  let inCharacterClass = false;
+  let captureCount = 0;
+  let issue: string | undefined = undefined;
+  const captures: NotificationSemanticCaptures = {};
+  for (let index = 0; index < pattern.length; index++) {
+    const character = pattern[index];
+    if (escaped) {
+      if (character === 'k' && pattern[index + 1] === '<') {
+        issue = '语义规则不支持命名反向引用';
+      }
+      translated += character;
+      escaped = false;
+      continue;
+    }
+    if (character === '\\') {
+      escaped = true;
+      translated += character;
+      continue;
+    }
+    if (character === '[') {
+      inCharacterClass = true;
+      translated += character;
+      continue;
+    }
+    if (character === ']' && inCharacterClass) {
+      inCharacterClass = false;
+      translated += character;
+      continue;
+    }
+    if (character !== '(' || inCharacterClass) {
+      translated += character;
+      continue;
+    }
+    if (pattern[index + 1] === '?' && pattern[index + 2] === '<' &&
+      pattern[index + 3] !== '=' && pattern[index + 3] !== '!') {
+      const nameEnd = pattern.indexOf('>', index + 3);
+      if (nameEnd < 0) {
+        translated += character;
+        continue;
+      }
+      const name = pattern.substring(index + 3, nameEnd);
+      captureCount++;
+      if (SEMANTIC_CAPTURE_NAMES.indexOf(name) < 0 || !putSemanticCapture(captures, name, captureCount)) {
+        issue = '命名捕获无效、重复或不受支持：' + name;
+      }
+      translated += '(';
+      index = nameEnd;
+      continue;
+    }
+    if (pattern[index + 1] !== '?') {
+      issue = '语义规则请为每个捕获组命名，结构分组使用 (?:...)';
+      captureCount++;
+    }
+    translated += character;
+  }
+  if ((captures.amount === undefined || captures.direction === undefined) && issue === undefined) {
+    issue = '正文正则必须包含命名捕获 amount 和 direction';
+  }
+  try {
+    const expression = new RegExp(translated);
+    return { expression: expression, captureCount: captureCount, captures: captures, issue: issue };
+  } catch (_error) {
+    return undefined;
+  }
+}
+
 function isPositiveGroup(group: number | undefined): boolean {
   if (group === undefined) {
     return false;
@@ -223,19 +324,33 @@ export function validateNotificationRule(rule: NotificationRule): RuleValidation
     return { field: 'bodyPattern', message: '请输入正文正则' };
   }
   let captureCount = 0;
+  let semantic: CompiledNotificationPattern | undefined = undefined;
   try {
-    new RegExp(rule.bodyPattern);
-    captureCount = countCaptureGroups(rule.bodyPattern);
+    if (rule.semanticCaptures === true) {
+      semantic = compileSemanticPattern(rule.bodyPattern);
+      if (semantic === undefined) {
+        return { field: 'bodyPattern', message: '正文正则格式无效' };
+      }
+      if (semantic.issue !== undefined) {
+        return { field: 'bodyPattern', message: semantic.issue };
+      }
+      captureCount = semantic.captureCount;
+    } else {
+      new RegExp(rule.bodyPattern);
+      captureCount = countCaptureGroups(rule.bodyPattern);
+    }
   } catch (_error) {
     return { field: 'bodyPattern', message: '正文正则格式无效' };
   }
-  const amountIssue = validateGroupReference('amountGroup', rule.amountGroup, captureCount, true);
-  if (amountIssue !== undefined) {
-    return amountIssue;
-  }
-  const directionIssue = validateGroupReference('directionGroup', rule.directionGroup, captureCount, true);
-  if (directionIssue !== undefined) {
-    return directionIssue;
+  if (rule.semanticCaptures !== true) {
+    const amountIssue = validateGroupReference('amountGroup', rule.amountGroup, captureCount, true);
+    if (amountIssue !== undefined) {
+      return amountIssue;
+    }
+    const directionIssue = validateGroupReference('directionGroup', rule.directionGroup, captureCount, true);
+    if (directionIssue !== undefined) {
+      return directionIssue;
+    }
   }
   if (typeof rule.incomeText !== 'string' || splitDirectionTexts(rule.incomeText).length === 0 ||
     typeof rule.expenseText !== 'string' || splitDirectionTexts(rule.expenseText).length === 0) {
@@ -261,9 +376,15 @@ export function validateNotificationRule(rule: NotificationRule): RuleValidation
     return { field: 'dateStrategy', message: '日期策略无效' };
   }
   if (strategy !== 'delivery-time') {
-    const dateIssue = validateGroupReference('dateGroup', rule.dateGroup, captureCount, true);
-    if (dateIssue !== undefined) {
-      return dateIssue;
+    if (rule.semanticCaptures === true) {
+      if (semantic?.captures.date === undefined) {
+        return { field: 'bodyPattern', message: '非投递时间策略必须包含命名捕获 date' };
+      }
+    } else {
+      const dateIssue = validateGroupReference('dateGroup', rule.dateGroup, captureCount, true);
+      if (dateIssue !== undefined) {
+        return dateIssue;
+      }
     }
     if (typeof rule.dateFormat !== 'string' || rule.dateFormat.length === 0) {
       return { field: 'dateFormat', message: '请填写日期格式' };
@@ -271,25 +392,30 @@ export function validateNotificationRule(rule: NotificationRule): RuleValidation
     if (!rule.dateFormat.includes('HH') || !rule.dateFormat.includes('mm')) {
       return { field: 'dateFormat', message: '日期格式必须包含 HH 和 mm；仅有日期时请选择投递时间策略' };
     }
-  } else if (rule.dateGroup !== undefined) {
+  } else if (rule.semanticCaptures !== true && rule.dateGroup !== undefined) {
     const dateIssue = validateGroupReference('dateGroup', rule.dateGroup, captureCount, false);
     if (dateIssue !== undefined) {
       return dateIssue;
     }
   }
-  const merchantIssue = validateGroupReference('merchantGroup', rule.merchantGroup, captureCount, false);
-  if (merchantIssue !== undefined) {
-    return merchantIssue;
-  }
-  const categoryIssue = validateGroupReference('categoryGroup', rule.categoryGroup, captureCount, false);
-  if (categoryIssue !== undefined) {
-    return categoryIssue;
+  if (rule.semanticCaptures !== true) {
+    const merchantIssue = validateGroupReference('merchantGroup', rule.merchantGroup, captureCount, false);
+    if (merchantIssue !== undefined) {
+      return merchantIssue;
+    }
+    const categoryIssue = validateGroupReference('categoryGroup', rule.categoryGroup, captureCount, false);
+    if (categoryIssue !== undefined) {
+      return categoryIssue;
+    }
   }
   if (typeof rule.noteTemplate !== 'string') {
     return { field: 'noteTemplate', message: '备注模板无效' };
   }
   const noteGroupPattern = /{{(\d+)}}/g;
   let noteGroup: RegExpExecArray | null = noteGroupPattern.exec(rule.noteTemplate);
+  if (rule.semanticCaptures === true && noteGroup !== null) {
+    return { field: 'noteTemplate', message: '语义规则备注不能引用数字捕获组' };
+  }
   while (noteGroup !== null) {
     const group = Number(noteGroup[1]);
     if (!isPositiveGroup(group) || group > captureCount) {
@@ -325,7 +451,7 @@ export function decodeNotificationRuleStore(value: string | undefined): Notifica
     throw new Error('通知规则数据版本或内容无效');
   }
   const store = stored as NotificationRuleStore;
-  if (store.version !== 1 || !Array.isArray(store.rules)) {
+  if ((store.version !== 1 && store.version !== 2) || !Array.isArray(store.rules)) {
     throw new Error('通知规则数据版本或内容无效');
   }
   if (store.defaultRulesVersion !== undefined && store.defaultRulesVersion !== 1) {
@@ -339,6 +465,9 @@ export function decodeNotificationRuleStore(value: string | undefined): Notifica
     }
   }
   let migrated = migrateLegacyDefaultAmountPatterns(rules);
+  if (store.version === 1) {
+    migrated = true;
+  }
   if (store.defaultRulesVersion === undefined) {
     const hadBankDefaults = rules.some((rule: NotificationRule) =>
       (rule.id === 'icbc' && rule.entrySource === 'icbc') || (rule.id === 'citic' && rule.entrySource === 'citic'));
@@ -453,7 +582,20 @@ function makeLocalTimestamp(fields: ParsedDateFields, year: number): number | un
   return date.getTime();
 }
 
-function parseHappenedAt(rule: NotificationRule, match: RegExpExecArray, input: NotificationInput): number | undefined {
+function captureValue(match: RegExpExecArray, semantic: NotificationSemanticCaptures,
+  name: 'amount' | 'direction' | 'date' | 'merchant' | 'category', legacyGroup?: number): string | undefined {
+  let semanticGroup: number | undefined = undefined;
+  if (name === 'amount') { semanticGroup = semantic.amount; }
+  else if (name === 'direction') { semanticGroup = semantic.direction; }
+  else if (name === 'date') { semanticGroup = semantic.date; }
+  else if (name === 'merchant') { semanticGroup = semantic.merchant; }
+  else { semanticGroup = semantic.category; }
+  const group = semanticGroup ?? legacyGroup;
+  return group === undefined ? undefined : match[group];
+}
+
+function parseHappenedAt(rule: NotificationRule, match: RegExpExecArray, input: NotificationInput,
+  semantic: NotificationSemanticCaptures): number | undefined {
   if (rule.dateStrategy === 'delivery-time') {
     const timestamp = typeof input.deliveryTime === 'number' && Number.isFinite(input.deliveryTime) && input.deliveryTime > 0
       ? input.deliveryTime
@@ -468,7 +610,7 @@ function parseHappenedAt(rule: NotificationRule, match: RegExpExecArray, input: 
     date.setSeconds(0, 0);
     return date.getTime();
   }
-  const dateText = match[rule.dateGroup as number];
+  const dateText = captureValue(match, semantic, 'date', rule.dateGroup);
   if (dateText === undefined) {
     return undefined;
   }
@@ -513,17 +655,18 @@ function parseHappenedAt(rule: NotificationRule, match: RegExpExecArray, input: 
 function parseMatchedRule(
   rule: NotificationRule,
   match: RegExpExecArray,
-  input: NotificationInput
+  input: NotificationInput,
+  semantic: NotificationSemanticCaptures
 ): ParsedNotificationEntry | undefined {
   if (validateNotificationRule(rule) !== undefined) {
     return undefined;
   }
-  const amountText = match[rule.amountGroup];
+  const amountText = captureValue(match, semantic, 'amount', rule.amountGroup);
   const amountFen = amountText === undefined ? undefined : parseAmountFen(amountText);
   if (amountFen === undefined || amountFen <= 0) {
     return undefined;
   }
-  const directionText = match[rule.directionGroup];
+  const directionText = captureValue(match, semantic, 'direction', rule.directionGroup);
   let direction: 'income' | 'expense';
   if (directionText !== undefined && splitDirectionTexts(rule.incomeText).includes(directionText)) {
     direction = 'income';
@@ -532,18 +675,18 @@ function parseMatchedRule(
   } else {
     return undefined;
   }
-  const happenedAt = parseHappenedAt(rule, match, input);
+  const happenedAt = parseHappenedAt(rule, match, input, semantic);
   if (happenedAt === undefined) {
     return undefined;
   }
-  let merchant = rule.merchantGroup === undefined ? '' : (match[rule.merchantGroup] ?? '').trim();
+  let merchant = (captureValue(match, semantic, 'merchant', rule.merchantGroup) ?? '').trim();
   if (rule.merchantPrefixToStrip.length > 0 && merchant.startsWith(rule.merchantPrefixToStrip)) {
     merchant = merchant.slice(rule.merchantPrefixToStrip.length).trim();
   }
   if (merchant.length === 0) {
     merchant = rule.defaultMerchant;
   }
-  const categoryText = rule.categoryGroup === undefined ? '' : (match[rule.categoryGroup] ?? '').trim();
+  const categoryText = (captureValue(match, semantic, 'category', rule.categoryGroup) ?? '').trim();
   let category = rule.defaultCategory;
   if (rule.categoryMappings.length > 0) {
     const mapping = rule.categoryMappings.find((candidate: NotificationCategoryMapping) =>
@@ -553,7 +696,8 @@ function parseMatchedRule(
     if (mapping !== undefined) {
       category = mapping.category;
     }
-  } else if (rule.categoryGroup !== undefined && categoryText.length > 0) {
+  } else if ((rule.semanticCaptures === true ? semantic.category !== undefined : rule.categoryGroup !== undefined) &&
+    categoryText.length > 0) {
     category = categoryText;
   }
   const note = rule.noteTemplate.replace(/{{(\d+)}}/g, (_placeholder: string, groupText: string) =>
@@ -588,16 +732,26 @@ export function parseNotificationEntry(
       continue;
     }
     let expression: RegExp;
-    try {
-      expression = new RegExp(rule.bodyPattern);
-    } catch (_error) {
-      continue;
+    let semantic: NotificationSemanticCaptures = {};
+    if (rule.semanticCaptures === true) {
+      const compiled = compileSemanticPattern(rule.bodyPattern);
+      if (compiled === undefined || compiled.issue !== undefined) {
+        continue;
+      }
+      expression = compiled.expression;
+      semantic = compiled.captures;
+    } else {
+      try {
+        expression = new RegExp(rule.bodyPattern);
+      } catch (_error) {
+        continue;
+      }
     }
     const match = expression.exec(notificationText);
     if (match === null) {
       continue;
     }
-    return parseMatchedRule(rule, match, input);
+    return parseMatchedRule(rule, match, input, semantic);
   }
   return undefined;
 }

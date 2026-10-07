@@ -18,8 +18,8 @@ export async function loadOcrRules(context: common.Context): Promise<OcrRule[]> 
     savedValue = value;
   }
   const state = decodeOcrRuleStore(savedValue);
-  if (state.persistDefaults) {
-    const serialized: OcrRuleStore = { version: 1, rules: state.rules };
+  if (state.persistDefaults || state.migrated === true) {
+    const serialized: OcrRuleStore = { version: 2, rules: state.rules };
     preferencesStore.putSync(RULES_KEY, JSON.stringify(serialized));
     await preferencesStore.flush();
   }
@@ -37,7 +37,7 @@ export async function saveOcrRules(context: common.Context, rules: OcrRule[]): P
     }
   }
   const preferencesStore = await preferences.getPreferences(context, PREFERENCES_NAME);
-  const serialized: OcrRuleStore = { version: 1, rules: rules };
+  const serialized: OcrRuleStore = { version: 2, rules: rules };
   preferencesStore.putSync(RULES_KEY, JSON.stringify(serialized));
   await preferencesStore.flush();
 }

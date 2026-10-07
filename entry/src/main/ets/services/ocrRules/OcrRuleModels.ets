@@ -1,6 +1,7 @@
 import type { ImportSource } from '../../model/LedgerModels';
 
-export type OcrLayoutStrategy = 'receipt-list' | 'icbc-statement';
+export type OcrLayoutStrategy = 'receipt-list' | 'icbc-statement' | 'generic';
+export type OcrRecordMode = 'row' | 'anchor';
 
 export interface OcrPattern {
   pattern: string;
@@ -9,7 +10,26 @@ export interface OcrPattern {
 
 export interface OcrSourceMatcher {
   pattern: string;
-  weight: number;
+  weight?: number;
+}
+
+export interface OcrRecordConfig {
+  mode: OcrRecordMode;
+  anchorPattern?: string;
+}
+
+export interface OcrColumnRange {
+  left: number;
+  right: number;
+}
+
+export interface OcrColumns {
+  amount?: OcrColumnRange;
+  date?: OcrColumnRange;
+  time?: OcrColumnRange;
+  direction?: OcrColumnRange;
+  merchant?: OcrColumnRange;
+  category?: OcrColumnRange;
 }
 
 export interface OcrCategoryMapping {
@@ -22,10 +42,13 @@ export interface OcrRule {
   name: string;
   enabled: boolean;
   source: ImportSource;
+  sourceName?: string;
   layoutStrategy: OcrLayoutStrategy;
+  record?: OcrRecordConfig;
+  columns?: OcrColumns;
   sourceMatchers: OcrSourceMatcher[];
-  minimumScore: number;
-  scoreMargin: number;
+  minimumScore?: number;
+  scoreMargin?: number;
   amountPattern: OcrPattern;
   datePattern: OcrPattern;
   timePattern?: OcrPattern;
@@ -43,13 +66,14 @@ export interface OcrRule {
 }
 
 export interface OcrRuleStore {
-  version: 1;
+  version: 2;
   rules: OcrRule[];
 }
 
 export interface OcrRuleLoadResult {
   rules: OcrRule[];
   persistDefaults: boolean;
+  migrated?: boolean;
 }
 
 export interface OcrRuleValidationIssue {
